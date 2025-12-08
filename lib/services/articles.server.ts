@@ -1,8 +1,9 @@
+// Server-side service for managing articles in Firestore
 import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
-import { randomUUID } from "crypto";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { SavedArticle } from "../../types/blog";
 
-// Ensure Firebase Admin is initialized (shared with other server utilities)
+// Initialize Firebase Admin (server-side)
 if (getApps().length === 0) {
   initializeApp({
     credential: cert({
@@ -15,107 +16,179 @@ if (getApps().length === 0) {
 
 const adminDb = getFirestore();
 
-export type ArticleStatus = "draft" | "scheduled" | "published";
-
-export interface StoredArticle {
-  id: string;
-  title: string;
-  topic?: string;
-  slug?: string;
-  status: ArticleStatus;
-  scheduledAt?: string | null;
-  publishedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  wordpressPostId?: number;
-  wordpressEditUrl?: string;
-  contentHtml?: string;
-  wordCount?: number;
-  seo?: {
-    metaTitle?: string;
-    metaDescription?: string;
-    slug?: string;
-    keywords?: string[];
-  };
-}
-
-export type CreateArticleInput = Omit<
-  StoredArticle,
-  "id" | "createdAt" | "updatedAt"
-> & { id?: string };
-
-const collectionForUser = (userId: string) =>
-  adminDb.collection("users").doc(userId).collection("private").doc("articles").collection("items");
-
-export async function createArticle(
+/**
+ * Save a new article to Firestore
+ */
+export async function saveArticle(
   userId: string,
-  data: CreateArticleInput
-): Promise<StoredArticle> {
+  article: Omit<SavedArticle, "id" | "userId" | "createdAt" | "updatedAt">
+): Promise<SavedArticle> {
   const now = new Date().toISOString();
-  const id = data.id || randomUUID();
-  const record: StoredArticle = {
-    id,
-    title: data.title,
-    topic: data.topic,
-    slug: data.slug,
-    status: data.status,
-    scheduledAt: data.scheduledAt || null,
-    publishedAt: data.publishedAt || null,
-    wordpressPostId: data.wordpressPostId,
-    wordpressEditUrl: data.wordpressEditUrl,
-    contentHtml: data.contentHtml,
-    wordCount: data.wordCount,
-    seo: data.seo,
+  const docRef = adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("articles")
+    .doc();
+
+  const savedArticle: SavedArticle = {
+    ...article,
+    id: docRef.id,
+    userId,
     createdAt: now,
     updatedAt: now,
   };
 
-  const sanitized = removeUndefined(record);
-
-  await collectionForUser(userId).doc(id).set(sanitized);
-  return sanitized;
+  await docRef.set(savedArticle);
+  return savedArticle;
 }
 
+/**
+ * Get all articles for a user
+ */
+export async function getUserArticles(userId: string): Promise<SavedArticle[]> {
+  const snapshot = await adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("articles")
+    .orderBy("createdAt", "desc")
+    .get();
+
+  return snapshot.docs.map((doc) => doc.data() as SavedArticle);
+}
+
+/**
+ * Get a single article by ID
+ */
+export async function getArticleById(
+  userId: string,
+  articleId: string
+): Promise<SavedArticle | null> {
+  const docRef = adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("articles")
+    .doc(articleId);
+
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) return null;
+
+  return docSnap.data() as SavedArticle;
+}
+
+/**
+ * Update an article
+ */
 export async function updateArticle(
   userId: string,
-  id: string,
-  updates: Partial<StoredArticle>
-): Promise<StoredArticle | null> {
-  const ref = collectionForUser(userId).doc(id);
-  const snap = await ref.get();
-  if (!snap.exists) return null;
-  const existing = snap.data() as StoredArticle;
-  const merged: StoredArticle = {
-    ...existing,
+  articleId: string,
+  updates: Partial<SavedArticle>
+): Promise<SavedArticle | null> {
+  const docRef = adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("articles")
+    .doc(articleId);
+
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) return null;
+
+  const updatedData = {
     ...updates,
     updatedAt: new Date().toISOString(),
-    id,
   };
-  const sanitized = removeUndefined(merged);
-  await ref.set(sanitized);
-  return sanitized;
+
+  await docRef.update(updatedData);
+
+  const updatedDoc = await docRef.get();
+  return updatedDoc.data() as SavedArticle;
 }
 
-export async function listArticles(userId: string): Promise<StoredArticle[]> {
-  const snap = await collectionForUser(userId).orderBy("createdAt", "desc").get();
-  return snap.docs.map((d) => d.data() as StoredArticle);
-}
-
-export async function getArticle(
+/**
+ * Delete an article
+ */
+export async function deleteArticle(
   userId: string,
-  id: string
-): Promise<StoredArticle | null> {
-  const doc = await collectionForUser(userId).doc(id).get();
-  if (!doc.exists) return null;
-  return doc.data() as StoredArticle;
+  articleId: string
+): Promise<boolean> {
+  const docRef = adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("articles")
+    .doc(articleId);
+
+  const docSnap = await docRef.get();
+  if (!docSnap.exists) return false;
+
+  await docRef.delete();
+  return true;
 }
 
-// Utility to strip undefined (Firestore rejects undefined)
-function removeUndefined<T extends Record<string, any>>(obj: T): T {
-  const copy: Record<string, any> = {};
-  Object.entries(obj).forEach(([k, v]) => {
-    if (v !== undefined) copy[k] = v;
+/**
+ * Get scheduled articles (for cron job)
+ */
+export async function getScheduledArticlesDue(): Promise<SavedArticle[]> {
+  const now = new Date().toISOString();
+  
+  // Query all users' articles that are scheduled and due
+  const usersSnapshot = await adminDb.collection("users").get();
+  const dueArticles: SavedArticle[] = [];
+
+  for (const userDoc of usersSnapshot.docs) {
+    const articlesSnapshot = await userDoc.ref
+      .collection("articles")
+      .where("status", "==", "scheduled")
+      .where("scheduledAt", "<=", now)
+      .get();
+
+    for (const articleDoc of articlesSnapshot.docs) {
+      dueArticles.push(articleDoc.data() as SavedArticle);
+    }
+  }
+
+  return dueArticles;
+}
+
+/**
+ * Schedule an article for publication
+ */
+export async function scheduleArticle(
+  userId: string,
+  articleId: string,
+  scheduledAt: string
+): Promise<SavedArticle | null> {
+  return updateArticle(userId, articleId, {
+    status: "scheduled",
+    scheduledAt,
   });
-  return copy as T;
+}
+
+/**
+ * Unschedule an article (back to draft)
+ */
+export async function unscheduleArticle(
+  userId: string,
+  articleId: string
+): Promise<SavedArticle | null> {
+  return updateArticle(userId, articleId, {
+    status: "draft",
+    scheduledAt: undefined,
+  });
+}
+
+/**
+ * Mark article as published
+ */
+export async function markArticlePublished(
+  userId: string,
+  articleId: string,
+  wordpressPostId: number,
+  wordpressEditUrl: string
+): Promise<SavedArticle | null> {
+  return updateArticle(userId, articleId, {
+    status: "published",
+    publishedAt: new Date().toISOString(),
+    wordpressPostId,
+    wordpressEditUrl,
+  });
 }
 

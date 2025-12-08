@@ -17,6 +17,8 @@ import {
   Edit2,
   Trash2,
   Target,
+  Save,
+  Calendar,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { GenerationProgress, CTA } from "../../types/blog";
@@ -82,6 +84,8 @@ export default function GeneratePage() {
   const [isPublishingToWP, setIsPublishingToWP] = useState(false);
   const [showTokenUsage, setShowTokenUsage] = useState(false);
   const [showMissingKeysModal, setShowMissingKeysModal] = useState(false);
+  const [isSavingArticle, setIsSavingArticle] = useState(false);
+  const [savedArticleId, setSavedArticleId] = useState<string | null>(null);
   const [missingKeys, setMissingKeys] = useState<
     { key: string; label: string; placeholder: string }[]
   >([]);
@@ -306,6 +310,7 @@ export default function GeneratePage() {
 
     setIsGenerating(true);
     setResult(null);
+    setSavedArticleId(null);
     setProgress({
       step: "research",
       message: "Starting generation...",
@@ -494,6 +499,53 @@ export default function GeneratePage() {
       toast.error(error instanceof Error ? error.message : "Failed to publish");
     } finally {
       setIsPublishingToWP(false);
+    }
+  };
+
+  const handleSaveArticle = async () => {
+    if (!result || !result.articleContent) {
+      toast.error("No article to save");
+      return;
+    }
+
+    setIsSavingArticle(true);
+
+    try {
+      const idToken = await user?.getIdToken();
+      if (!idToken) {
+        toast.error("Authentication failed. Please log in again.");
+        return;
+      }
+
+      const response = await fetch("/api/articles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          title: result.seoMetadata?.metaTitle || topic,
+          content: result.articleContent,
+          seoMetadata: result.seoMetadata,
+          outline: result.outline,
+          images: result.images,
+          wordCount: result.wordCount,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to save article");
+      }
+
+      const data = await response.json();
+      setSavedArticleId(data.article.id);
+      toast.success("Article saved to your library!");
+    } catch (error) {
+      console.error("Error saving article:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to save article");
+    } finally {
+      setIsSavingArticle(false);
     }
   };
 
@@ -1301,9 +1353,10 @@ export default function GeneratePage() {
                   </div>
                 )}
 
-                {/* WordPress Edit Link */}
-                {result.postId && result.editUrl && (
-                  <div className="mb-6">
+                {/* Action Buttons */}
+                <div className="mb-6 flex flex-wrap gap-3">
+                  {/* WordPress Edit Link */}
+                  {result.postId && result.editUrl && (
                     <motion.a
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
@@ -1315,8 +1368,54 @@ export default function GeneratePage() {
                       <ExternalLink className="w-4 h-4" />
                       Open in WordPress
                     </motion.a>
-                  </div>
-                )}
+                  )}
+
+                  {/* Save Article Button */}
+                  {result.articleContent && !savedArticleId && (
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleSaveArticle}
+                      disabled={isSavingArticle}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSavingArticle ? (
+                        <>
+                          <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                            className="w-4 h-4 border-2 border-white border-t-transparent rounded-full"
+                          />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          Save to Library
+                        </>
+                      )}
+                    </motion.button>
+                  )}
+
+                  {/* Saved + Schedule Button */}
+                  {savedArticleId && (
+                    <>
+                      <span className="inline-flex items-center gap-2 px-6 py-3 bg-gray-100 text-gray-600 rounded-xl font-medium">
+                        <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        Saved
+                      </span>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={() => router.push(`/generate/calendar?articleId=${savedArticleId}`)}
+                        className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors"
+                      >
+                        <Calendar className="w-4 h-4" />
+                        Schedule Publication
+                      </motion.button>
+                    </>
+                  )}
+                </div>
 
                 {/* Article Display */}
                 {result.articleContent && (

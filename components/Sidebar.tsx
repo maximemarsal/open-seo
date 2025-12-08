@@ -9,6 +9,8 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  FolderOpen,
+  Calendar,
 } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "../contexts/AuthContext";
@@ -30,14 +32,14 @@ export default function Sidebar() {
     },
     {
       id: "articles",
-      label: "Articles",
-      icon: FileText,
+      label: "My Articles",
+      icon: FolderOpen,
       path: "/generate/articles",
     },
     {
       id: "calendar",
       label: "Calendar",
-      icon: Sparkles,
+      icon: Calendar,
       path: "/generate/calendar",
     },
     {

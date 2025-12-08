@@ -1,288 +1,672 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
-import { useRouter } from "next/navigation";
-import { addMonths, addWeeks, endOfMonth, format, startOfMonth, startOfWeek } from "date-fns";
+import React, { useState, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Calendar as CalendarIcon,
+  Clock,
+  FileText,
+  Send,
+  X,
+  GripVertical,
+} from "lucide-react";
 import { toast } from "react-hot-toast";
-
-type Article = {
-  id: string;
-  title: string;
-  topic?: string;
-  status: "draft" | "scheduled" | "published";
-  scheduledAt?: string;
-  wordpressEditUrl?: string;
-};
+import { useAuth } from "../../../contexts/AuthContext";
+import { useRouter, useSearchParams } from "next/navigation";
+import { SavedArticle } from "../../../types/blog";
 
 type ViewMode = "month" | "week";
+
+interface DayCell {
+  date: Date;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+  articles: SavedArticle[];
+}
 
 export default function CalendarPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [articles, setArticles] = useState<Article[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [publishingId, setPublishingId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("month");
+  const searchParams = useSearchParams();
+  const [articles, setArticles] = useState<SavedArticle[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [viewMode, setViewMode] = useState<ViewMode>("month");
+  const [draggedArticle, setDraggedArticle] = useState<SavedArticle | null>(null);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedTime, setSelectedTime] = useState("09:00");
+  const [articleToSchedule, setArticleToSchedule] = useState<SavedArticle | null>(null);
 
-  const loadArticles = async () => {
-    if (!user) return;
-    setLoading(true);
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push("/");
+    }
+  }, [user, authLoading, router]);
+
+  useEffect(() => {
+    if (user) {
+      fetchArticles();
+    }
+  }, [user]);
+
+  // Check if there's an article ID in URL to pre-select for scheduling
+  useEffect(() => {
+    const articleId = searchParams.get("articleId");
+    if (articleId && articles.length > 0) {
+      const article = articles.find((a) => a.id === articleId);
+      if (article && article.status !== "published") {
+        setArticleToSchedule(article);
+        setShowScheduleModal(true);
+      }
+    }
+  }, [searchParams, articles]);
+
+  const fetchArticles = async () => {
     try {
-      const idToken = await user.getIdToken();
-      const res = await fetch("/api/articles", {
-        headers: { Authorization: `Bearer ${idToken}` },
+      setIsLoading(true);
+      const idToken = await user?.getIdToken();
+      const response = await fetch("/api/articles", {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
       });
-      const data = await res.json();
+
+      if (!response.ok) throw new Error("Failed to fetch articles");
+
+      const data = await response.json();
       setArticles(data.articles || []);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error("Error fetching articles:", error);
       toast.error("Failed to load articles");
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
-  useEffect(() => {
-    if (!authLoading && !user) router.push("/");
-    if (user) loadArticles();
-  }, [user, authLoading]);
+  const handleSchedule = async (article: SavedArticle, date: Date, time: string) => {
+    const [hours, minutes] = time.split(":").map(Number);
+    const scheduledDate = new Date(date);
+    scheduledDate.setHours(hours, minutes, 0, 0);
 
-  const publishArticle = async (id: string, publishAt?: string) => {
-    if (!user) return;
-    setPublishingId(id);
+    if (scheduledDate <= new Date()) {
+      toast.error("Please select a future date and time");
+      return;
+    }
+
     try {
-      const idToken = await user.getIdToken();
-      const res = await fetch(`/api/articles/${id}/publish`, {
+      const idToken = await user?.getIdToken();
+      const response = await fetch(`/api/articles/${article.id}/schedule`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ publishAt }),
+        body: JSON.stringify({ scheduledAt: scheduledDate.toISOString() }),
       });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Publish failed");
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to schedule");
       }
-      toast.success(publishAt ? "Article scheduled" : "Article published");
-      await loadArticles();
-    } catch (err: any) {
-      console.error(err);
-      toast.error(err.message || "Publish failed");
-    } finally {
-      setPublishingId(null);
+
+      const data = await response.json();
+      setArticles(
+        articles.map((a) => (a.id === article.id ? { ...a, ...data.article } : a))
+      );
+      toast.success("Article scheduled!");
+      setShowScheduleModal(false);
+      setArticleToSchedule(null);
+    } catch (error: any) {
+      console.error("Error scheduling article:", error);
+      toast.error(error.message || "Failed to schedule article");
     }
   };
 
-  const unscheduled = articles.filter((a) => !a.scheduledAt && a.status !== "published");
+  const handleUnschedule = async (articleId: string) => {
+    try {
+      const idToken = await user?.getIdToken();
+      const response = await fetch(`/api/articles/${articleId}/schedule`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
 
-  const scheduledByDay = useMemo(() => {
-    const map: Record<string, Article[]> = {};
-    articles.forEach((a) => {
-      if (a.scheduledAt) {
-        const dayKey = format(new Date(a.scheduledAt), "yyyy-MM-dd");
-        map[dayKey] = map[dayKey] || [];
-        map[dayKey].push(a);
-      }
-    });
-    return map;
-  }, [articles]);
+      if (!response.ok) throw new Error("Failed to unschedule");
 
-  const currentMonthDays = useMemo(() => {
-    const start = startOfWeek(startOfMonth(currentDate), { weekStartsOn: 1 });
-    const end = endOfMonth(currentDate);
-    const days: Date[] = [];
-    let cursor = start;
-    while (cursor <= end || days.length % 7 !== 0) {
-      days.push(cursor);
-      cursor = new Date(cursor.getTime() + 24 * 60 * 60 * 1000);
+      const data = await response.json();
+      setArticles(
+        articles.map((a) => (a.id === articleId ? { ...a, ...data.article } : a))
+      );
+      toast.success("Article unscheduled");
+    } catch (error) {
+      console.error("Error unscheduling:", error);
+      toast.error("Failed to unschedule article");
     }
+  };
+
+  const handleDragStart = (e: React.DragEvent, article: SavedArticle) => {
+    setDraggedArticle(article);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDrop = (e: React.DragEvent, date: Date) => {
+    e.preventDefault();
+    if (draggedArticle && draggedArticle.status !== "published") {
+      setSelectedDate(date);
+      setArticleToSchedule(draggedArticle);
+      setShowScheduleModal(true);
+    }
+    setDraggedArticle(null);
+  };
+
+  // Calendar generation helpers
+  const getDaysInMonth = (date: Date): DayCell[] => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startDate = new Date(firstDay);
+    startDate.setDate(startDate.getDate() - startDate.getDay());
+
+    const days: DayCell[] = [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (let i = 0; i < 42; i++) {
+      const currentDay = new Date(startDate);
+      currentDay.setDate(startDate.getDate() + i);
+
+      const dayArticles = articles.filter((a) => {
+        if (!a.scheduledAt) return false;
+        const scheduled = new Date(a.scheduledAt);
+        return (
+          scheduled.getDate() === currentDay.getDate() &&
+          scheduled.getMonth() === currentDay.getMonth() &&
+          scheduled.getFullYear() === currentDay.getFullYear()
+        );
+      });
+
+      days.push({
+        date: currentDay,
+        isCurrentMonth: currentDay.getMonth() === month,
+        isToday: currentDay.getTime() === today.getTime(),
+        articles: dayArticles,
+      });
+    }
+
     return days;
-  }, [currentDate]);
-
-  const currentWeekDays = useMemo(() => {
-    const start = startOfWeek(currentDate, { weekStartsOn: 1 });
-    return Array.from({ length: 7 }).map((_, i) => new Date(start.getTime() + i * 24 * 60 * 60 * 1000));
-  }, [currentDate]);
-
-  const onDropDate = async (date: Date, articleId: string) => {
-    const time = window.prompt("Heure (HH:MM)", "09:00") || "09:00";
-    const [h, m] = time.split(":").map(Number);
-    if (Number.isNaN(h) || Number.isNaN(m)) {
-      toast.error("Heure invalide");
-      return;
-    }
-    const scheduled = new Date(date);
-    scheduled.setHours(h, m, 0, 0);
-    await publishArticle(articleId, scheduled.toISOString());
   };
 
-  if (authLoading || loading) {
+  const getWeekDays = (date: Date): DayCell[] => {
+    const startOfWeek = new Date(date);
+    startOfWeek.setDate(date.getDate() - date.getDay());
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const days: DayCell[] = [];
+
+    for (let i = 0; i < 7; i++) {
+      const currentDay = new Date(startOfWeek);
+      currentDay.setDate(startOfWeek.getDate() + i);
+
+      const dayArticles = articles.filter((a) => {
+        if (!a.scheduledAt) return false;
+        const scheduled = new Date(a.scheduledAt);
+        return (
+          scheduled.getDate() === currentDay.getDate() &&
+          scheduled.getMonth() === currentDay.getMonth() &&
+          scheduled.getFullYear() === currentDay.getFullYear()
+        );
+      });
+
+      days.push({
+        date: currentDay,
+        isCurrentMonth: true,
+        isToday: currentDay.getTime() === today.getTime(),
+        articles: dayArticles,
+      });
+    }
+
+    return days;
+  };
+
+  const navigatePrev = () => {
+    if (viewMode === "month") {
+      setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
+    } else {
+      const newDate = new Date(currentDate);
+      newDate.setDate(newDate.getDate() - 7);
+      setCurrentDate(newDate);
+    }
+  };
+
+  const navigateNext = () => {
+    if (viewMode === "month") {
+      setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
+    } else {
+      const newDate = new Date(currentDate);
+      newDate.setDate(newDate.getDate() + 7);
+      setCurrentDate(newDate);
+    }
+  };
+
+  const goToToday = () => {
+    setCurrentDate(new Date());
+  };
+
+  const formatMonthYear = (date: Date) => {
+    return date.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  };
+
+  const formatWeekRange = (date: Date) => {
+    const startOfWeek = new Date(date);
+    startOfWeek.setDate(date.getDate() - date.getDay());
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 6);
+
+    return `${startOfWeek.toLocaleDateString("fr-FR", {
+      day: "numeric",
+      month: "short",
+    })} - ${endOfWeek.toLocaleDateString("fr-FR", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })}`;
+  };
+
+  const unscheduledArticles = articles.filter(
+    (a) => a.status === "draft" && !a.scheduledAt
+  );
+
+  if (authLoading || isLoading) {
     return (
-      <div className="p-8">
-        <div className="animate-pulse text-gray-500">Loading calendar...</div>
+      <div className="min-h-screen bg-gradient-to-br from-white via-gray-50 to-gray-100 flex items-center justify-center">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          className="w-12 h-12 border-4 border-gray-200 border-t-gray-900 rounded-full"
+        />
       </div>
     );
   }
 
-  const renderDayCell = (day: Date) => {
-    const key = format(day, "yyyy-MM-dd");
-    const dayArticles = scheduledByDay[key] || [];
-    return (
-      <div
-        key={key}
-        className="border border-gray-200 min-h-[120px] p-2 rounded-lg bg-white"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          const articleId = e.dataTransfer.getData("text/plain");
-          if (articleId) onDropDate(day, articleId);
-        }}
-      >
-        <div className="text-xs text-gray-500 mb-1">{format(day, "EEE d")}</div>
-        <div className="space-y-2">
-          {dayArticles.map((a) => (
-            <div
-              key={a.id}
-              draggable
-              onDragStart={(e) => e.dataTransfer.setData("text/plain", a.id)}
-              className="p-2 bg-amber-50 border border-amber-200 rounded-md text-sm text-gray-800 cursor-move"
-            >
-              {a.title}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
+  if (!user) return null;
 
-  const nav = (
-    <div className="flex gap-3">
-      <button
-        onClick={() =>
-          setCurrentDate((d) =>
-            viewMode === "month" ? addMonths(d, -1) : addWeeks(d, -1)
-          )
-        }
-        className="px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-      >
-        Prev
-      </button>
-      <button
-        onClick={() => setCurrentDate(new Date())}
-        className="px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-      >
-        Today
-      </button>
-      <button
-        onClick={() =>
-          setCurrentDate((d) =>
-            viewMode === "month" ? addMonths(d, 1) : addWeeks(d, 1)
-          )
-        }
-        className="px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50"
-      >
-        Next
-      </button>
-    </div>
-  );
+  const days = viewMode === "month" ? getDaysInMonth(currentDate) : getWeekDays(currentDate);
+  const weekDays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const hours = Array.from({ length: 24 }, (_, i) => i);
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Calendar</h1>
+    <div className="min-h-screen bg-gradient-to-br from-white via-gray-50 to-gray-100 p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6"
+        >
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Content Calendar</h1>
           <p className="text-gray-600">
-            Drag articles onto a date to schedule WordPress publication.
+            Drag and drop articles to schedule their publication
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setViewMode("month")}
-            className={`px-3 py-2 rounded-lg border ${
-              viewMode === "month"
-                ? "bg-gray-900 text-white border-gray-900"
-                : "border-gray-200 text-gray-800"
-            }`}
-          >
-            Month
-          </button>
-          <button
-            onClick={() => setViewMode("week")}
-            className={`px-3 py-2 rounded-lg border ${
-              viewMode === "week"
-                ? "bg-gray-900 text-white border-gray-900"
-                : "border-gray-200 text-gray-800"
-            }`}
-          >
-            Week
-          </button>
-          {nav}
-        </div>
-      </div>
+        </motion.div>
 
-      <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-3 bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-900">Unscheduled</h3>
-            <span className="text-sm text-gray-500">{unscheduled.length}</span>
-          </div>
-          <div className="space-y-2">
-            {unscheduled.map((a) => (
-              <div
-                key={a.id}
-                draggable
-                onDragStart={(e) => e.dataTransfer.setData("text/plain", a.id)}
-                className="p-3 border border-gray-200 rounded-xl bg-gray-50 cursor-move"
-              >
-                <div className="font-medium text-gray-900 text-sm">{a.title}</div>
-                <div className="text-xs text-gray-500">{a.topic}</div>
-                <div className="flex gap-2 mt-2">
+        <div className="flex gap-6">
+          {/* Sidebar - Unscheduled Articles */}
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="w-72 flex-shrink-0"
+          >
+            <div className="bg-white rounded-2xl border border-gray-200 p-4 sticky top-8">
+              <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5" />
+                Unscheduled Articles
+              </h3>
+              <div className="space-y-2 max-h-[60vh] overflow-auto">
+                {unscheduledArticles.length === 0 ? (
+                  <p className="text-sm text-gray-500 text-center py-4">
+                    No unscheduled articles
+                  </p>
+                ) : (
+                  unscheduledArticles.map((article) => (
+                    <div
+                      key={article.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, article)}
+                      className="p-3 bg-gray-50 rounded-xl border border-gray-200 cursor-grab hover:shadow-md transition-all group"
+                    >
+                      <div className="flex items-start gap-2">
+                        <GripVertical className="w-4 h-4 text-gray-400 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {article.title}
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {article.wordCount} words
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Calendar */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="flex-1"
+          >
+            <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+              {/* Calendar Header */}
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                <div className="flex items-center gap-4">
                   <button
-                    disabled={publishingId === a.id}
-                    onClick={() => publishArticle(a.id)}
-                    className="px-3 py-1 text-xs rounded-lg bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-60"
+                    onClick={navigatePrev}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
                   >
-                    Publish now
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <h2 className="text-lg font-semibold text-gray-900 min-w-[200px] text-center">
+                    {viewMode === "month"
+                      ? formatMonthYear(currentDate)
+                      : formatWeekRange(currentDate)}
+                  </h2>
+                  <button
+                    onClick={navigateNext}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <ChevronRight className="w-5 h-5" />
                   </button>
                   <button
-                    disabled={publishingId === a.id}
-                    onClick={() => onDropDate(new Date(), a.id)}
-                    className="px-3 py-1 text-xs rounded-lg border border-gray-200 text-gray-800 hover:bg-gray-50"
+                    onClick={goToToday}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                   >
-                    Schedule today
+                    Today
+                  </button>
+                </div>
+
+                {/* View Mode Toggle */}
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+                  <button
+                    onClick={() => setViewMode("month")}
+                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      viewMode === "month"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Month
+                  </button>
+                  <button
+                    onClick={() => setViewMode("week")}
+                    className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
+                      viewMode === "week"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-600 hover:text-gray-900"
+                    }`}
+                  >
+                    Week
                   </button>
                 </div>
               </div>
-            ))}
-            {unscheduled.length === 0 && (
-              <div className="text-sm text-gray-500">All articles are scheduled.</div>
-            )}
-          </div>
-        </div>
 
-        <div className="col-span-9 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {viewMode === "month"
-                ? format(currentDate, "LLLL yyyy")
-                : `Week of ${format(startOfWeek(currentDate, { weekStartsOn: 1 }), "PP")}`}
-            </h3>
-          </div>
+              {/* Month View */}
+              {viewMode === "month" && (
+                <div className="p-4">
+                  {/* Day Headers */}
+                  <div className="grid grid-cols-7 gap-1 mb-2">
+                    {weekDays.map((day) => (
+                      <div
+                        key={day}
+                        className="text-center text-sm font-medium text-gray-500 py-2"
+                      >
+                        {day}
+                      </div>
+                    ))}
+                  </div>
 
-          {viewMode === "month" ? (
-            <div className="grid grid-cols-7 gap-3">
-              {currentMonthDays.map((day) => renderDayCell(day))}
+                  {/* Calendar Grid */}
+                  <div className="grid grid-cols-7 gap-1">
+                    {days.map((day, index) => (
+                      <div
+                        key={index}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, day.date)}
+                        className={`min-h-[100px] p-2 rounded-lg border transition-all ${
+                          day.isCurrentMonth
+                            ? "bg-white border-gray-200"
+                            : "bg-gray-50 border-gray-100"
+                        } ${day.isToday ? "ring-2 ring-gray-900" : ""} ${
+                          draggedArticle ? "hover:bg-blue-50 hover:border-blue-300" : ""
+                        }`}
+                      >
+                        <div
+                          className={`text-sm font-medium mb-1 ${
+                            day.isCurrentMonth ? "text-gray-900" : "text-gray-400"
+                          }`}
+                        >
+                          {day.date.getDate()}
+                        </div>
+                        <div className="space-y-1">
+                          {day.articles.slice(0, 2).map((article) => (
+                            <div
+                              key={article.id}
+                              className="text-xs p-1.5 bg-blue-100 text-blue-700 rounded truncate cursor-pointer hover:bg-blue-200 transition-colors"
+                              onClick={() => {
+                                setArticleToSchedule(article);
+                                setSelectedDate(day.date);
+                                if (article.scheduledAt) {
+                                  const scheduled = new Date(article.scheduledAt);
+                                  setSelectedTime(
+                                    `${scheduled.getHours().toString().padStart(2, "0")}:${scheduled.getMinutes().toString().padStart(2, "0")}`
+                                  );
+                                }
+                                setShowScheduleModal(true);
+                              }}
+                            >
+                              {article.title}
+                            </div>
+                          ))}
+                          {day.articles.length > 2 && (
+                            <div className="text-xs text-gray-500">
+                              +{day.articles.length - 2} more
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Week View */}
+              {viewMode === "week" && (
+                <div className="p-4">
+                  <div className="grid grid-cols-7 gap-2">
+                    {days.map((day, index) => (
+                      <div
+                        key={index}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDrop(e, day.date)}
+                        className={`min-h-[400px] p-3 rounded-lg border transition-all ${
+                          day.isToday
+                            ? "bg-blue-50 border-blue-200 ring-2 ring-blue-400"
+                            : "bg-white border-gray-200"
+                        } ${
+                          draggedArticle ? "hover:bg-blue-50 hover:border-blue-300" : ""
+                        }`}
+                      >
+                        <div className="text-center mb-4">
+                          <div className="text-xs text-gray-500 uppercase">
+                            {weekDays[index]}
+                          </div>
+                          <div
+                            className={`text-2xl font-bold ${
+                              day.isToday ? "text-blue-600" : "text-gray-900"
+                            }`}
+                          >
+                            {day.date.getDate()}
+                          </div>
+                          <div className="text-xs text-gray-400">
+                            {day.date.toLocaleDateString("fr-FR", { month: "short" })}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          {day.articles.map((article) => (
+                            <div
+                              key={article.id}
+                              className="p-2 bg-blue-100 text-blue-700 rounded-lg text-sm cursor-pointer hover:bg-blue-200 transition-colors"
+                              onClick={() => {
+                                setArticleToSchedule(article);
+                                setSelectedDate(day.date);
+                                if (article.scheduledAt) {
+                                  const scheduled = new Date(article.scheduledAt);
+                                  setSelectedTime(
+                                    `${scheduled.getHours().toString().padStart(2, "0")}:${scheduled.getMinutes().toString().padStart(2, "0")}`
+                                  );
+                                }
+                                setShowScheduleModal(true);
+                              }}
+                            >
+                              <div className="font-medium truncate">{article.title}</div>
+                              {article.scheduledAt && (
+                                <div className="text-xs mt-1 flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {new Date(article.scheduledAt).toLocaleTimeString(
+                                    "fr-FR",
+                                    { hour: "2-digit", minute: "2-digit" }
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="grid grid-cols-7 gap-3">
-              {currentWeekDays.map((day) => renderDayCell(day))}
-            </div>
-          )}
+          </motion.div>
         </div>
       </div>
+
+      {/* Schedule Modal */}
+      <AnimatePresence>
+        {showScheduleModal && articleToSchedule && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => {
+              setShowScheduleModal(false);
+              setArticleToSchedule(null);
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl max-w-md w-full p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-xl font-bold text-gray-900">Schedule Article</h2>
+                <button
+                  onClick={() => {
+                    setShowScheduleModal(false);
+                    setArticleToSchedule(null);
+                  }}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="mb-6">
+                <p className="text-sm text-gray-500 mb-1">Article</p>
+                <p className="font-medium text-gray-900">{articleToSchedule.title}</p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Date
+                  </label>
+                  <input
+                    type="date"
+                    value={
+                      selectedDate
+                        ? selectedDate.toISOString().split("T")[0]
+                        : new Date().toISOString().split("T")[0]
+                    }
+                    onChange={(e) => setSelectedDate(new Date(e.target.value))}
+                    min={new Date().toISOString().split("T")[0]}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Time
+                  </label>
+                  <input
+                    type="time"
+                    value={selectedTime}
+                    onChange={(e) => setSelectedTime(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                {articleToSchedule.status === "scheduled" && (
+                  <button
+                    onClick={() => {
+                      handleUnschedule(articleToSchedule.id);
+                      setShowScheduleModal(false);
+                      setArticleToSchedule(null);
+                    }}
+                    className="flex-1 px-4 py-3 border border-red-200 text-red-600 rounded-xl font-semibold hover:bg-red-50 transition-all"
+                  >
+                    Unschedule
+                  </button>
+                )}
+                <button
+                  onClick={() =>
+                    handleSchedule(
+                      articleToSchedule,
+                      selectedDate || new Date(),
+                      selectedTime
+                    )
+                  }
+                  className="flex-1 px-4 py-3 bg-gray-900 text-white rounded-xl font-semibold hover:bg-gray-800 transition-all flex items-center justify-center gap-2"
+                >
+                  <CalendarIcon className="w-5 h-5" />
+                  {articleToSchedule.status === "scheduled"
+                    ? "Update Schedule"
+                    : "Schedule"}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

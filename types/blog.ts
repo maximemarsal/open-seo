@@ -112,3 +112,21 @@ export interface CTA {
     buttonText: string;
   };
 }
+
+export interface SavedArticle {
+  id: string;
+  userId: string;
+  title: string;
+  content: string;
+  seoMetadata: SEOMetadata;
+  outline?: BlogOutline;
+  images?: ImageAsset[];
+  wordCount: number;
+  status: "draft" | "scheduled" | "published";
+  scheduledAt?: string; // ISO date string
+  publishedAt?: string; // ISO date string
+  wordpressPostId?: number;
+  wordpressEditUrl?: string;
+  createdAt: string;
+  updatedAt: string;
+}

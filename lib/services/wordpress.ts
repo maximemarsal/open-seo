@@ -41,8 +41,7 @@ export class WordPressService {
     content: BlogContent,
     seoMetadata: SEOMetadata,
     topic: string,
-    status: "draft" | "publish" | "future" = "publish",
-    publishAt?: string
+    status: "draft" | "publish" = "publish"
   ): Promise<{ postId: number; editUrl: string }> {
     try {
       // Clean the HTML to avoid duplicate H1 when WordPress theme also renders the title
@@ -51,7 +50,7 @@ export class WordPressService {
       const post: WordPressPost = {
         title: seoMetadata.metaTitle,
         content: cleanedHtml,
-        status: status === "future" ? "draft" : status, // WP post creation supports draft/publish; schedule via date in API call
+        status,
         excerpt: seoMetadata.metaDescription,
         slug: seoMetadata.slug,
         meta: {
@@ -72,7 +71,6 @@ export class WordPressService {
         title: post.title,
         content: post.content,
         status: post.status,
-        ...(publishAt ? { date: publishAt } : {}),
       });
 
       const postId = response.data.id;
@@ -179,17 +177,6 @@ export class WordPressService {
       // Yoast SEO might not be installed or access is blocked; continue without it
       console.warn("Could not add Yoast SEO metadata:", error);
     }
-  }
-
-  async updatePostStatus(
-    postId: number,
-    status: "publish" | "future",
-    publishAt?: string
-  ): Promise<void> {
-    await this.wordpressApi.post(`/posts/${postId}`, {
-      status,
-      ...(publishAt ? { date: publishAt } : {}),
-    });
   }
 
   private async getOrCreateCategories(
