@@ -1,0 +1,100 @@
+⚡ QUICK START GUIDE - Blog Generator AI
+=========================================
+
+🚀 DÉMARRAGE RAPIDE EN 5 MINUTES
+
+1️⃣ INSTALLER LES DÉPENDANCES
+   npm install
+
+2️⃣ CONFIGURER FIREBASE
+   - Aller sur https://console.firebase.google.com/
+   - Créer un nouveau projet
+   - Activer Authentication > Email/Password + Google
+   - Récupérer les 6 clés de configuration (voir FIREBASE_SETUP.txt)
+
+3️⃣ CRÉER .env.local
+   cp env.example .env.local
+   
+   Remplir TOUTES les variables Firebase :
+   ✓ NEXT_PUBLIC_FIREBASE_API_KEY
+   ✓ NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+   ✓ NEXT_PUBLIC_FIREBASE_PROJECT_ID
+   ✓ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+   ✓ NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+   ✓ NEXT_PUBLIC_FIREBASE_APP_ID
+
+   Et vos clés AI :
+   ✓ OPENAI_API_KEY
+   ✓ PERPLEXITY_API_KEY
+   
+   WordPress (optionnel) :
+   - WORDPRESS_URL
+   - WORDPRESS_USERNAME
+   - WORDPRESS_PASSWORD
+
+4️⃣ LANCER L'APPLICATION
+   npm run dev
+
+5️⃣ OUVRIR DANS LE NAVIGATEUR
+   http://localhost:3000
+
+---
+
+✅ CE QUI DEVRAIT SE PASSER :
+
+1. Vous voyez la landing page moderne
+2. Cliquez sur "Get Started"
+3. Créez un compte avec email ou Google
+4. Vous êtes redirigé vers /generate
+5. Générez votre premier article !
+
+---
+
+❌ PROBLÈMES COURANTS :
+
+ERREUR : "Firebase: Error (auth/configuration-not-found)"
+→ Vérifiez que toutes les variables NEXT_PUBLIC_FIREBASE_* sont dans .env.local
+
+ERREUR : "Missing required environment variables"
+→ Vérifiez OPENAI_API_KEY et PERPLEXITY_API_KEY
+
+L'AUTH GOOGLE NE FONCTIONNE PAS
+→ Allez dans Firebase Console > Authentication > Sign-in method
+→ Vérifiez que Google est activé
+
+JE SUIS BLOQUÉ SUR LA LANDING PAGE
+→ Ouvrez la console du navigateur (F12)
+→ Vérifiez les erreurs Firebase
+→ Testez avec l'email/password d'abord
+
+---
+
+📚 DOCUMENTATION COMPLÈTE :
+
+- README.md : Documentation complète
+- FIREBASE_SETUP.txt : Guide Firebase détaillé
+- CHANGES_SUMMARY.txt : Ce qui a changé
+- env.example : Toutes les variables nécessaires
+
+---
+
+💡 CONSEILS :
+
+1. Utilisez d'abord email/password pour tester (plus simple)
+2. Testez Google Sign-in après avoir vérifié que l'email fonctionne
+3. Vérifiez toujours la console du navigateur en cas d'erreur
+4. Firebase doit avoir "localhost" dans les domaines autorisés (par défaut)
+
+---
+
+🎉 VOUS ÊTES PRÊT !
+
+Une fois connecté, vous avez accès à :
+- Génération d'articles avec AI (GPT-5, Claude, Gemini, etc.)
+- Recherche web avec Perplexity
+- Optimisation SEO automatique
+- Publication WordPress (si configuré)
+- Export HTML/Markdown
+
+Bon développement ! 🚀
+

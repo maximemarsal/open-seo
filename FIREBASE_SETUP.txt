@@ -1,0 +1,62 @@
+🔥 CONFIGURATION FIREBASE - INSTRUCTIONS
+==========================================
+
+Pour configurer Firebase pour l'authentification, suivez ces étapes :
+
+1. CRÉER UN PROJET FIREBASE
+   - Allez sur https://console.firebase.google.com/
+   - Cliquez sur "Ajouter un projet"
+   - Donnez un nom à votre projet (ex: "blog-generator-ai")
+   - Désactivez Google Analytics si vous n'en avez pas besoin
+   - Cliquez sur "Créer le projet"
+
+2. CONFIGURER L'AUTHENTIFICATION
+   - Dans le menu de gauche, allez dans "Authentication"
+   - Cliquez sur "Commencer"
+   - Activez les méthodes de connexion suivantes :
+     ✓ Email/Mot de passe
+     ✓ Google
+
+3. ENREGISTRER VOTRE APPLICATION WEB
+   - Dans les paramètres du projet (roue dentée en haut à gauche)
+   - Cliquez sur "Ajouter une application" puis choisissez "Web" (icône </>)
+   - Donnez un nom à votre application
+   - Cochez "Firebase Hosting" si vous voulez l'utiliser plus tard
+   - Cliquez sur "Enregistrer l'application"
+
+4. RÉCUPÉRER LES CLÉS DE CONFIGURATION
+   - Firebase vous affichera un objet de configuration
+   - Copiez les valeurs suivantes dans votre fichier .env.local :
+
+   NEXT_PUBLIC_FIREBASE_API_KEY=votre-api-key
+   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=votre-projet.firebaseapp.com
+   NEXT_PUBLIC_FIREBASE_PROJECT_ID=votre-projet-id
+   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=votre-projet.appspot.com
+   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=votre-sender-id
+   NEXT_PUBLIC_FIREBASE_APP_ID=votre-app-id
+
+5. CONFIGURER LES DOMAINES AUTORISÉS
+   - Dans Authentication > Settings > Authorized domains
+   - Ajoutez votre domaine de production si vous en avez un
+   - localhost est déjà autorisé par défaut
+
+6. CRÉER LE FICHIER .env.local
+   - Copiez le fichier env.example vers .env.local
+   - Remplissez toutes les variables Firebase
+   - Gardez vos autres clés API (OpenAI, Perplexity, etc.)
+
+7. DÉMARRER L'APPLICATION
+   npm run dev
+
+C'est tout ! Votre application dispose maintenant de :
+✅ Authentification par email/mot de passe
+✅ Authentification par Google
+✅ Protection des routes (seuls les utilisateurs connectés peuvent accéder à /generate)
+✅ Une belle page d'accueil marketing
+✅ Un dashboard protégé pour générer des articles
+
+NOTES IMPORTANTES :
+- Les variables NEXT_PUBLIC_* sont accessibles côté client
+- Ne commitez JAMAIS votre fichier .env.local
+- Pour la production, ajoutez ces variables dans Railway/Vercel/etc.
+

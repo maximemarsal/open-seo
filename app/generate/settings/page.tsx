@@ -1,0 +1,807 @@
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Key, Eye, EyeOff, Globe, Zap, Image, Save } from "lucide-react";
+import { toast } from "react-hot-toast";
+import { useAuth } from "../../../contexts/AuthContext";
+import { useRouter } from "next/navigation";
+import {
+  saveUserApiKeys,
+  getUserApiKeys,
+} from "../../../lib/services/userKeys";
+import ApiKeyTooltip from "../../../components/ApiKeyTooltip";
+
+interface ApiKeys {
+  openaiKey: string;
+  perplexityKey: string;
+  anthropicKey: string;
+  geminiKey: string;
+  deepseekKey: string;
+  qwenKey: string;
+  grokKey: string;
+  unsplashKey: string;
+  wordpressUrl: string;
+  wordpressUsername: string;
+  wordpressPassword: string;
+}
+
+export default function SettingsPage() {
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
+  const [showKeys, setShowKeys] = useState<{ [key: string]: boolean }>({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasAiChanges, setHasAiChanges] = useState(false);
+  const [hasOtherChanges, setHasOtherChanges] = useState(false);
+  const [hasWordPressChanges, setHasWordPressChanges] = useState(false);
+  const [apiKeys, setApiKeys] = useState<ApiKeys>({
+    openaiKey: "",
+    perplexityKey: "",
+    anthropicKey: "",
+    geminiKey: "",
+    deepseekKey: "",
+    qwenKey: "",
+    grokKey: "",
+    unsplashKey: "",
+    wordpressUrl: "",
+    wordpressUsername: "",
+    wordpressPassword: "",
+  });
+  const [originalKeys, setOriginalKeys] = useState<ApiKeys>({
+    openaiKey: "",
+    perplexityKey: "",
+    anthropicKey: "",
+    geminiKey: "",
+    deepseekKey: "",
+    qwenKey: "",
+    grokKey: "",
+    unsplashKey: "",
+    wordpressUrl: "",
+    wordpressUsername: "",
+    wordpressPassword: "",
+  });
+
+  // Redirect if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push("/");
+    }
+  }, [user, authLoading, router]);
+
+  // Load from Firestore on mount
+  useEffect(() => {
+    const loadKeys = async () => {
+      if (!user) return;
+
+      try {
+        setIsLoading(true);
+        const keys = await getUserApiKeys(user.uid);
+        if (keys) {
+          const loadedKeys = {
+            openaiKey: keys.openaiKey || "",
+            perplexityKey: keys.perplexityKey || "",
+            anthropicKey: keys.anthropicKey || "",
+            geminiKey: keys.geminiKey || "",
+            deepseekKey: keys.deepseekKey || "",
+            qwenKey: keys.qwenKey || "",
+            grokKey: keys.grokKey || "",
+            unsplashKey: keys.unsplashKey || "",
+            wordpressUrl: keys.wordpressUrl || "",
+            wordpressUsername: keys.wordpressUsername || "",
+            wordpressPassword: keys.wordpressPassword || "",
+          };
+          setApiKeys(loadedKeys);
+          setOriginalKeys(loadedKeys);
+        }
+      } catch (error) {
+        console.error("Error loading API keys:", error);
+        toast.error("Failed to load your settings");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadKeys();
+  }, [user]);
+
+  // Detect changes in each section
+  useEffect(() => {
+    if (isLoading) return;
+
+    // AI Services changes
+    const aiChanged =
+      apiKeys.openaiKey !== originalKeys.openaiKey ||
+      apiKeys.perplexityKey !== originalKeys.perplexityKey ||
+      apiKeys.anthropicKey !== originalKeys.anthropicKey ||
+      apiKeys.geminiKey !== originalKeys.geminiKey ||
+      apiKeys.deepseekKey !== originalKeys.deepseekKey ||
+      apiKeys.qwenKey !== originalKeys.qwenKey ||
+      apiKeys.grokKey !== originalKeys.grokKey;
+
+    // Other Services changes
+    const otherChanged = apiKeys.unsplashKey !== originalKeys.unsplashKey;
+
+    // WordPress changes
+    const wordpressChanged =
+      apiKeys.wordpressUrl !== originalKeys.wordpressUrl ||
+      apiKeys.wordpressUsername !== originalKeys.wordpressUsername ||
+      apiKeys.wordpressPassword !== originalKeys.wordpressPassword;
+
+    setHasAiChanges(aiChanged);
+    setHasOtherChanges(otherChanged);
+    setHasWordPressChanges(wordpressChanged);
+  }, [apiKeys, originalKeys, isLoading]);
+
+  const handleSave = async () => {
+    if (!user) return;
+
+    try {
+      setIsSaving(true);
+
+      // Test WordPress credentials if they have changed
+      if (hasWordPressChanges && apiKeys.wordpressUrl && apiKeys.wordpressUsername && apiKeys.wordpressPassword) {
+        const testResponse = await fetch("/api/wordpress/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            wordpressUrl: apiKeys.wordpressUrl,
+            wordpressUsername: apiKeys.wordpressUsername,
+            wordpressPassword: apiKeys.wordpressPassword,
+          }),
+        });
+
+        const testResult = await testResponse.json();
+
+        if (!testResult.success) {
+          toast.error(`WordPress Test Failed: ${testResult.message}`, {
+            duration: 6000,
+          });
+          setIsSaving(false);
+          return;
+        } else {
+          toast.success(`WordPress Connected: ${testResult.message}`, {
+            duration: 4000,
+          });
+        }
+      }
+
+      await saveUserApiKeys(user.uid, apiKeys);
+      setOriginalKeys(apiKeys);
+      setHasAiChanges(false);
+      setHasOtherChanges(false);
+      setHasWordPressChanges(false);
+      toast.success("Settings saved successfully!");
+    } catch (error) {
+      console.error("Error saving API keys:", error);
+      toast.error("Failed to save settings");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const toggleShowKey = (key: string) => {
+    setShowKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  if (authLoading || isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-white via-gray-50 to-gray-100 flex items-center justify-center">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          className="w-12 h-12 border-4 border-gray-200 border-t-gray-900 rounded-full"
+        />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return null;
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-white via-gray-50 to-gray-100 p-8">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-8"
+        >
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Settings</h1>
+          <p className="text-gray-600">
+            Configure your API keys and integrations
+          </p>
+        </motion.div>
+
+        {/* Info Banner */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="bg-green-50 border border-green-200 rounded-2xl p-6 mb-8"
+        >
+          <h3 className="font-semibold text-green-900 mb-2 flex items-center gap-2">
+            <Key className="w-5 h-5" />
+            🔒 Your keys are secure
+          </h3>
+          <p className="text-green-800 text-sm">
+            All API keys are encrypted and stored securely. They're never
+            exposed to the browser and are only accessed server-side for API
+            calls. Only you can access your keys.
+          </p>
+        </motion.div>
+
+        {/* AI Services Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white rounded-3xl shadow-xl p-8 mb-8"
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+            <Zap className="w-6 h-6 text-purple-600" />
+            AI Services
+          </h2>
+          <p className="text-gray-600 text-sm mb-6">
+            Configure your AI provider API keys for content generation
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* OpenAI */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/OpenAI 2.svg"
+                    alt="OpenAI"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>OpenAI API Key</span>
+                  <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="openai" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["openai"] ? "text" : "password"}
+                  value={apiKeys.openaiKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, openaiKey: e.target.value })
+                  }
+                  placeholder="sk-..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("openai")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["openai"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Perplexity */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Perplexity Color.svg"
+                    alt="Perplexity"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>Perplexity API Key</span>
+                  <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="perplexity" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["perplexity"] ? "text" : "password"}
+                  value={apiKeys.perplexityKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, perplexityKey: e.target.value })
+                  }
+                  placeholder="pplx-..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("perplexity")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["perplexity"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Anthropic */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Anthropic 1.svg"
+                    alt="Anthropic"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>Anthropic API Key</span>
+                <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="anthropic" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["anthropic"] ? "text" : "password"}
+                  value={apiKeys.anthropicKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, anthropicKey: e.target.value })
+                  }
+                  placeholder="sk-ant-..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("anthropic")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["anthropic"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Google Gemini */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Logo Gemini.svg"
+                    alt="Google Gemini"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>Google Gemini API Key</span>
+                <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="gemini" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["gemini"] ? "text" : "password"}
+                  value={apiKeys.geminiKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, geminiKey: e.target.value })
+                  }
+                  placeholder="AI..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("gemini")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["gemini"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* DeepSeek */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Deepseek 2.svg"
+                    alt="DeepSeek"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>DeepSeek API Key</span>
+                <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="deepseek" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["deepseek"] ? "text" : "password"}
+                  value={apiKeys.deepseekKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, deepseekKey: e.target.value })
+                  }
+                  placeholder="sk-..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("deepseek")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["deepseek"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Alibaba Qwen */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Logo Qwen.svg"
+                    alt="Alibaba Qwen"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>Alibaba Qwen API Key</span>
+                <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="qwen" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["qwen"] ? "text" : "password"}
+                  value={apiKeys.qwenKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, qwenKey: e.target.value })
+                  }
+                  placeholder="sk-..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("qwen")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["qwen"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* xAI Grok */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Grok 1.svg"
+                    alt="xAI Grok"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>xAI Grok API Key</span>
+                <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="grok" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["grok"] ? "text" : "password"}
+                  value={apiKeys.grokKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, grokKey: e.target.value })
+                  }
+                  placeholder="xai-..."
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("grok")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["grok"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Save Button for AI Services */}
+          <AnimatePresence>
+            {hasAiChanges && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mt-6 flex justify-end"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 ${
+                    isSaving
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-gray-900 to-gray-700 text-white"
+                  }`}
+                >
+                  {isSaving ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                        className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                      />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      Save
+                    </>
+                  )}
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+
+        {/* Other Services Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-white rounded-3xl shadow-xl p-8 mb-8"
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+            <Image className="w-6 h-6 text-green-600" />
+            Other Services
+          </h2>
+          <p className="text-gray-600 text-sm mb-6">
+            Additional services for enhanced content features
+          </p>
+
+          <div className="space-y-6">
+            {/* Unsplash */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src="/images/Unsplash Vector Icon.svg"
+                    alt="Unsplash"
+                    className="w-5 h-5 object-contain"
+                  />
+                  <span>Unsplash Access Key</span>
+                <span className="text-gray-400">(Optional)</span>
+                <ApiKeyTooltip service="unsplash" />
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["unsplash"] ? "text" : "password"}
+                  value={apiKeys.unsplashKey}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, unsplashKey: e.target.value })
+                  }
+                  placeholder="For article images"
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("unsplash")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["unsplash"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Used to fetch royalty-free images for your articles
+              </p>
+            </div>
+          </div>
+
+          {/* Save Button for Other Services */}
+          <AnimatePresence>
+            {hasOtherChanges && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mt-6 flex justify-end"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 ${
+                    isSaving
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-gray-900 to-gray-700 text-white"
+                  }`}
+                >
+                  {isSaving ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                        className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                      />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      Save
+                    </>
+                  )}
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+
+        {/* WordPress Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="bg-white rounded-3xl shadow-xl p-8 mb-8"
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+            <img
+              src="/images/Icône WordPress.svg"
+              alt="WordPress"
+              className="w-6 h-6 object-contain"
+            />
+            WordPress Configuration
+          </h2>
+          <p className="text-gray-600 text-sm mb-6">
+            Connect your WordPress site for automatic article publishing
+          </p>
+
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <span>WordPress URL</span>
+                <ApiKeyTooltip service="wordpress" />
+                </div>
+              </label>
+              <input
+                type="url"
+                value={apiKeys.wordpressUrl}
+                onChange={(e) =>
+                  setApiKeys({ ...apiKeys, wordpressUrl: e.target.value })
+                }
+                placeholder="https://yoursite.com"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <span>WordPress Username</span>
+                </div>
+              </label>
+              <input
+                type="text"
+                value={apiKeys.wordpressUsername}
+                onChange={(e) =>
+                  setApiKeys({ ...apiKeys, wordpressUsername: e.target.value })
+                }
+                placeholder="admin"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <div className="flex items-center gap-2">
+                  <span>WordPress Application Password</span>
+                </div>
+              </label>
+              <div className="relative">
+                <input
+                  type={showKeys["wordpress"] ? "text" : "password"}
+                  value={apiKeys.wordpressPassword}
+                  onChange={(e) =>
+                    setApiKeys({
+                      ...apiKeys,
+                      wordpressPassword: e.target.value,
+                    })
+                  }
+                  placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+                  className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleShowKey("wordpress")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showKeys["wordpress"] ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Create an application password in WordPress: Users → Your
+                Profile → Application Passwords
+              </p>
+            </div>
+          </div>
+
+          {/* Save Button for WordPress */}
+          <AnimatePresence>
+            {hasWordPressChanges && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mt-6 flex justify-end"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 ${
+                    isSaving
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-gray-900 to-gray-700 text-white"
+                  }`}
+                >
+                  {isSaving ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                        className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                      />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      Save
+                    </>
+                  )}
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
+      </div>
+    </div>
+  );
+}

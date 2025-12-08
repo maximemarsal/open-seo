@@ -1,0 +1,193 @@
+🎯 NOUVELLE ARCHITECTURE - SIDEBAR NAVIGATION
+=============================================
+
+## ✨ Ce qui a été créé :
+
+### 📁 Structure des fichiers :
+
+```
+app/
+├── generate/
+│   ├── layout.tsx          ← Layout avec Sidebar pour toute la section /generate
+│   ├── page.tsx            ← "Post Creation" (génération d'articles)
+│   └── settings/
+│       └── page.tsx        ← "Settings" (configuration API keys)
+│
+components/
+└── Sidebar.tsx             ← Sidebar réutilisable avec navigation
+```
+
+## 🎨 Sidebar Features :
+
+### Design :
+- Sidebar fixe à gauche de l'écran
+- Dégradé noir (from-gray-900 to-gray-800)
+- Largeur : 280px (ouverte) / 80px (fermée)
+- Animation smooth au collapse/expand
+
+### Navigation :
+1. **Post Creation** (icône FileText)
+   - Route: `/generate`
+   - Page de génération d'articles
+
+2. **Settings** (icône Settings)
+   - Route: `/generate/settings`
+   - Configuration des API keys
+
+3. **Logout** (icône LogOut)
+   - Déconnexion
+   - Bouton rouge au hover
+
+### Comportement :
+- Bouton toggle (chevron) pour replier/déplier
+- Menu items avec état actif (fond blanc)
+- Labels visibles uniquement quand ouverte
+- Icônes toujours visibles
+
+## 📄 Page "Post Creation" (/generate)
+
+**Contenu :**
+- Formulaire complet de génération d'articles
+- Tous les paramètres (AI provider, model, research, etc.)
+- Bouton "Generate Article"
+- Affichage des résultats
+
+**Layout :**
+- Sidebar à gauche
+- Contenu principal avec margin-left adaptatif
+- Pas de header supplémentaire (juste le formulaire)
+
+## ⚙️ Page "Settings" (/generate/settings)
+
+**Sections :**
+
+### 1. AI Services
+- OpenAI API Key (requis)
+- Perplexity API Key (requis)
+- Anthropic API Key (optionnel)
+- Google Gemini API Key (optionnel)
+- DeepSeek API Key (optionnel)
+- Alibaba Qwen API Key (optionnel)
+- xAI Grok API Key (optionnel)
+- Unsplash Access Key (optionnel)
+
+### 2. WordPress Configuration
+- WordPress URL
+- WordPress Username
+- WordPress Application Password
+
+**Features :**
+- Toggle show/hide pour chaque clé (icône œil)
+- Inputs type="password" par défaut
+- Sauvegarde dans localStorage
+- Banner info sur la sécurité
+- Bouton "Save Settings" en bas
+
+## 🔐 Sécurité :
+
+- Toutes les clés stockées dans `localStorage`
+- Jamais envoyées au serveur
+- Utilisées uniquement pour les appels API directs
+- Type password avec toggle pour révéler
+
+## 🎨 Design :
+
+### Sidebar :
+- Background: gradient noir
+- Active item: blanc avec shadow
+- Hover: gris foncé
+- Icons: toujours 5x5
+- Animations: Framer Motion
+
+### Pages :
+- Background: gradient blanc/gris
+- Cards: blanc avec shadow-xl
+- Inputs: bg-gray-50 avec focus ring noir
+- Boutons: gradient noir avec shadow
+
+## 📱 Responsive :
+
+### Desktop (> 1024px) :
+- Sidebar: 280px (ouverte) ou 80px (fermée)
+- Content: margin-left adaptatif
+
+### Mobile/Tablet :
+- Sidebar: reste accessible
+- Content: margin-left réduit
+- Icons plus importants
+
+## 🔄 Navigation Flow :
+
+```
+Landing Page (/)
+    ↓
+  Login
+    ↓
+/generate (Post Creation)
+    ↓
+  [Sidebar visible]
+    ↓
+  Clic sur "Settings"
+    ↓
+/generate/settings
+    ↓
+  Configure API Keys
+    ↓
+  Clic sur "Post Creation"
+    ↓
+/generate (retour)
+```
+
+## 💾 localStorage Structure :
+
+```json
+{
+  "userApiKeys": {
+    "openaiKey": "sk-...",
+    "perplexityKey": "pplx-...",
+    "anthropicKey": "sk-ant-...",
+    "geminiKey": "AI...",
+    "deepseekKey": "sk-...",
+    "qwenKey": "sk-...",
+    "grokKey": "xai-...",
+    "unsplashKey": "...",
+    "wordpressUrl": "https://...",
+    "wordpressUsername": "admin",
+    "wordpressPassword": "xxxx xxxx..."
+  }
+}
+```
+
+## 🎯 Utilisation :
+
+### Pour l'utilisateur :
+
+1. **Première visite :**
+   - Se connecte sur la landing page
+   - Arrive sur /generate (Post Creation)
+   - Voit la sidebar à gauche
+
+2. **Configuration :**
+   - Clique sur "Settings" dans la sidebar
+   - Entre ses API keys
+   - Clique sur "Save Settings"
+   - Retour sur "Post Creation"
+
+3. **Génération :**
+   - Configure l'article
+   - Clique sur "Generate Article"
+   - Voit les résultats
+
+## 🚀 Avantages :
+
+✅ Navigation claire et intuitive
+✅ Sidebar professionnelle
+✅ Séparation logique des fonctionnalités
+✅ Facile d'ajouter de nouvelles pages
+✅ Configuration centralisée
+✅ Design moderne et élégant
+
+---
+
+**Note :** La sidebar est partagée entre toutes les pages de la section /generate grâce au layout.tsx !
+
