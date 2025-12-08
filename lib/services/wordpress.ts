@@ -51,7 +51,7 @@ export class WordPressService {
       const post: WordPressPost = {
         title: seoMetadata.metaTitle,
         content: cleanedHtml,
-        status,
+        status: status === "future" ? "draft" : status, // WP post creation supports draft/publish; schedule via date in API call
         excerpt: seoMetadata.metaDescription,
         slug: seoMetadata.slug,
         meta: {
