@@ -40,13 +40,14 @@ export class WordPressService {
   async createDraftPost(
     content: BlogContent,
     seoMetadata: SEOMetadata,
-    topic: string
+    topic: string,
+    status: "draft" | "publish" = "publish"
   ): Promise<{ postId: number; editUrl: string }> {
     try {
       const post: WordPressPost = {
         title: seoMetadata.metaTitle,
         content: content.html,
-        status: "draft",
+        status,
         excerpt: seoMetadata.metaDescription,
         slug: seoMetadata.slug,
         meta: {

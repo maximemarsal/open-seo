@@ -525,7 +525,7 @@ export async function POST(request: NextRequest) {
           if (publishToWordPress && wordpressService) {
             sendProgress({
               step: "wordpress",
-              message: "Creating WordPress draft...",
+              message: "Publishing to WordPress...",
               progress: 90,
             });
 
