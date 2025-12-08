@@ -23,8 +23,8 @@ export interface StoredArticle {
   topic?: string;
   slug?: string;
   status: ArticleStatus;
-  scheduledAt?: string;
-  publishedAt?: string;
+  scheduledAt?: string | null;
+  publishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   wordpressPostId?: number;
@@ -59,8 +59,8 @@ export async function createArticle(
     topic: data.topic,
     slug: data.slug,
     status: data.status,
-    scheduledAt: data.scheduledAt,
-    publishedAt: data.publishedAt,
+    scheduledAt: data.scheduledAt || null,
+    publishedAt: data.publishedAt || null,
     wordpressPostId: data.wordpressPostId,
     wordpressEditUrl: data.wordpressEditUrl,
     contentHtml: data.contentHtml,
@@ -70,8 +70,10 @@ export async function createArticle(
     updatedAt: now,
   };
 
-  await collectionForUser(userId).doc(id).set(record);
-  return record;
+  const sanitized = removeUndefined(record);
+
+  await collectionForUser(userId).doc(id).set(sanitized);
+  return sanitized;
 }
 
 export async function updateArticle(
@@ -89,8 +91,9 @@ export async function updateArticle(
     updatedAt: new Date().toISOString(),
     id,
   };
-  await ref.set(merged);
-  return merged;
+  const sanitized = removeUndefined(merged);
+  await ref.set(sanitized);
+  return sanitized;
 }
 
 export async function listArticles(userId: string): Promise<StoredArticle[]> {
@@ -105,5 +108,14 @@ export async function getArticle(
   const doc = await collectionForUser(userId).doc(id).get();
   if (!doc.exists) return null;
   return doc.data() as StoredArticle;
+}
+
+// Utility to strip undefined (Firestore rejects undefined)
+function removeUndefined<T extends Record<string, any>>(obj: T): T {
+  const copy: Record<string, any> = {};
+  Object.entries(obj).forEach(([k, v]) => {
+    if (v !== undefined) copy[k] = v;
+  });
+  return copy as T;
 }
 
