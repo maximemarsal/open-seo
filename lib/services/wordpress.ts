@@ -164,8 +164,17 @@ export class WordPressService {
         _yoast_wpseo_focuskw: seoMetadata.keywords[0],
         _yoast_wpseo_linkdex: "75", // Good SEO score
       });
-    } catch (error) {
-      // Yoast SEO might not be installed, continue without it
+    } catch (error: any) {
+      const status = error?.response?.status;
+      const code = error?.response?.data?.code;
+      // If the Yoast REST route is unavailable, don't block publication
+      if (status === 404 || code === "rest_no_route") {
+        console.warn(
+          "Yoast REST meta endpoint not found; skipping Yoast metadata. Ensure the Yoast REST API is enabled."
+        );
+        return;
+      }
+      // Yoast SEO might not be installed or access is blocked; continue without it
       console.warn("Could not add Yoast SEO metadata:", error);
     }
   }
@@ -268,11 +277,14 @@ export class WordPressService {
       ""
     );
 
-    // Drop a leading H1 even if not wrapped
+    // Drop a leading H1 that matches the title
     cleaned = cleaned.replace(
       new RegExp(`^\\s*<h1[^>]*>\\s*${this.escapeRegex(title)}\\s*<\\/h1>\\s*`, "i"),
       ""
     );
+
+    // Drop the first leading H1 even if the text differs (theme already shows the title)
+    cleaned = cleaned.replace(/^\\s*<h1[^>]*>.*?<\\/h1>\\s*/i, "");
 
     // Remove outer <article> tags if present
     cleaned = cleaned.replace(/<article[^>]*>/i, "").replace(/<\/article>/i, "");

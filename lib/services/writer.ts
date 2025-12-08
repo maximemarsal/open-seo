@@ -369,15 +369,11 @@ Write in the same language as the article title.
 `;
   }
 
-  private wrapInArticleStructure(content: string, title: string): string {
-    return `<article>
-  <header>
-    <h1>${title}</h1>
-  </header>
-  <div class="article-content">
-    ${content}
-  </div>
-</article>`;
+  // Return clean body only; avoid wrapping with <article>/<h1> to prevent duplicate titles in WordPress
+  private wrapInArticleStructure(content: string, _title: string): string {
+    return `<div class="article-content">
+  ${content}
+</div>`;
   }
 
   private countWords(html: string): number {
