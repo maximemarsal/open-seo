@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WordPressService } from "@/lib/services/wordpress";
-import { config } from "@/lib/config";
+import { verifyIdToken, getTokenFromHeader } from "@/lib/auth-server";
+import { getUserApiKeysServer } from "@/lib/services/userKeys.server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,22 +14,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if WordPress is configured
+    // Authenticate user to fetch their WordPress credentials
+    const authHeader = request.headers.get("authorization");
+    const idToken = getTokenFromHeader(authHeader);
+    if (!idToken) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
+    const userId = await verifyIdToken(idToken);
+    if (!userId) {
+      return NextResponse.json(
+        { error: "Invalid authentication token" },
+        { status: 401 }
+      );
+    }
+
+    const userKeys = await getUserApiKeysServer(userId);
+    const wordpressCredentials = {
+      url: userKeys?.wordpressUrl || process.env.WORDPRESS_URL || "",
+      username: userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
+      password: userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
+    };
+
+    // Check if WordPress is configured (user keys take priority over env)
     if (
-      !config.wordpress.url ||
-      !config.wordpress.username ||
-      !config.wordpress.password
+      !wordpressCredentials.url ||
+      !wordpressCredentials.username ||
+      !wordpressCredentials.password
     ) {
       return NextResponse.json(
         {
           error: "WordPress is not configured",
-          hint: "Please set WORDPRESS_URL, WORDPRESS_USERNAME, and WORDPRESS_PASSWORD in your environment variables",
+          hint:
+            "Add your WordPress URL, username and application password in Settings, or set WORDPRESS_URL/USERNAME/PASSWORD.",
         },
         { status: 400 }
       );
     }
 
-    const wordpressService = new WordPressService();
+    const wordpressService = new WordPressService(wordpressCredentials);
 
     // Test connection first
     const connection = await wordpressService.testConnection();

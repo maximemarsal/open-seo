@@ -37,8 +37,13 @@ Pour configurer Firebase pour l'authentification, suivez ces étapes :
 
 5. CONFIGURER LES DOMAINES AUTORISÉS
    - Dans Authentication > Settings > Authorized domains
-   - Ajoutez votre domaine de production si vous en avez un
    - localhost est déjà autorisé par défaut
+   - ⚠️ IMPORTANT POUR RAILWAY :
+     * Trouvez votre domaine Railway dans Railway > Settings > Networking
+     * Exemple : xxx.up.railway.app ou votre-domaine.com
+     * Cliquez sur "Add domain" dans Firebase Console
+     * Ajoutez le domaine Railway COMPLET (ex: xxx.up.railway.app)
+     * Sans cela, l'authentification Google ne fonctionnera PAS sur Railway !
 
 6. CRÉER LE FICHIER .env.local
    - Copiez le fichier env.example vers .env.local

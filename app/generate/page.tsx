@@ -457,10 +457,18 @@ export default function GeneratePage() {
     setIsPublishingToWP(true);
 
     try {
+      const idToken = await user?.getIdToken();
+      if (!idToken) {
+        toast.error("Authentication failed. Please log in again.");
+        setIsPublishingToWP(false);
+        return;
+      }
+
       const response = await fetch("/api/wordpress/publish", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
           title: result.seoMetadata?.metaTitle || topic,

@@ -2,16 +2,33 @@ import axios from "axios";
 import { config } from "../config";
 import { WordPressPost, SEOMetadata, BlogContent } from "../../types/blog";
 
+type WordPressCredentials = {
+  url: string;
+  username: string;
+  password: string;
+};
+
 export class WordPressService {
   private wordpressApi;
+  private credentials: WordPressCredentials;
 
-  constructor() {
+  constructor(credentials?: Partial<WordPressCredentials>) {
+    const url = (credentials?.url || config.wordpress.url || "").replace(
+      /\/$/,
+      ""
+    );
+    const username = credentials?.username || config.wordpress.username;
+    const password = (credentials?.password || config.wordpress.password || "")
+      // Remove spaces from application password if present
+      .replace(/\s+/g, "");
+
+    this.credentials = { url, username, password };
+
     this.wordpressApi = axios.create({
-      baseURL: `${config.wordpress.url}/wp-json/wp/v2`,
+      baseURL: `${this.credentials.url}/wp-json/wp/v2`,
       auth: {
-        username: config.wordpress.username,
-        // Remove spaces from application password if present
-        password: config.wordpress.password.replace(/\s+/g, ""),
+        username: this.credentials.username,
+        password: this.credentials.password,
       },
       headers: {
         "Content-Type": "application/json",
@@ -53,7 +70,7 @@ export class WordPressService {
       });
 
       const postId = response.data.id;
-      const editUrl = `${config.wordpress.url}/wp-admin/post.php?post=${postId}&action=edit`;
+      const editUrl = `${this.credentials.url}/wp-admin/post.php?post=${postId}&action=edit`;
 
       // 2. If successful, update with all other details (meta, slug, taxonomies)
       try {
