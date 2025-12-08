@@ -59,8 +59,6 @@ export async function POST(
 
   const content: BlogContent = {
     html: article.contentHtml,
-    sections: [],
-    images: [],
     wordCount: article.wordCount || 0,
     sources: [],
   };
