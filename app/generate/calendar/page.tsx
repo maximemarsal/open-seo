@@ -31,6 +31,16 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEK_DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+const isPastDate = (date: Date, hour?: number) => {
+  const target = new Date(date);
+  if (hour !== undefined) {
+    target.setHours(hour, 0, 0, 0);
+  } else {
+    target.setHours(23, 59, 59, 999);
+  }
+  return target.getTime() < Date.now();
+};
+
 function CalendarPageContent() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -175,16 +185,38 @@ function CalendarPageContent() {
 
   const handleDrop = (e: React.DragEvent, date: Date, hour?: number) => {
     e.preventDefault();
-    if (draggedArticle && draggedArticle.status !== "published") {
-      const dropDate = new Date(date);
-      if (hour !== undefined) {
-        dropDate.setHours(hour, 0, 0, 0);
-        setSelectedTime(`${hour.toString().padStart(2, "0")}:00`);
-      }
-      setSelectedDate(dropDate);
-      setArticleToSchedule(draggedArticle);
-      setShowScheduleModal(true);
+    if (!draggedArticle || draggedArticle.status === "published") {
+      setHoveredCell(null);
+      return;
     }
+
+    // Prevent drops on past dates
+    const dropDate = new Date(date);
+    if (hour !== undefined) dropDate.setHours(hour, 0, 0, 0);
+    if (isPastDate(dropDate, hour)) {
+      toast.error("Impossible de planifier dans le passé");
+      setDraggedArticle(null);
+      setHoveredCell(null);
+      return;
+    }
+
+    // If it's a reschedule of an already scheduled article and we have an hour, apply directly
+    if (draggedArticle.status === "scheduled" && hour !== undefined) {
+      const timeStr = `${hour.toString().padStart(2, "0")}:00`;
+      handleSchedule(draggedArticle, dropDate, timeStr);
+      setDraggedArticle(null);
+      setHoveredCell(null);
+      return;
+    }
+
+    // Otherwise open scheduling modal (for drafts or month view without hour)
+    if (hour !== undefined) {
+      setSelectedTime(`${hour.toString().padStart(2, "0")}:00`);
+    }
+    setSelectedDate(dropDate);
+    setArticleToSchedule(draggedArticle);
+    setShowScheduleModal(true);
+
     setDraggedArticle(null);
     setHoveredCell(null);
   };
@@ -519,13 +551,16 @@ function CalendarPageContent() {
                             </div>
                             <div className="space-y-1">
                               <AnimatePresence>
-                                {day.articles.slice(0, 2).map((article) => (
+                                  {day.articles.slice(0, 2).map((article) => (
                                   <motion.div
                                     key={article.id}
                                     initial={{ opacity: 0, scale: 0.8 }}
                                     animate={{ opacity: 1, scale: 1 }}
                                     exit={{ opacity: 0, scale: 0.8 }}
                                     whileHover={{ scale: 1.05 }}
+                                      draggable
+                                      onDragStart={(e: any) => handleDragStart(e, article)}
+                                      onDragEnd={() => setDraggedArticle(null)}
                                     onClick={() => {
                                       setArticleToSchedule(article);
                                       setSelectedDate(day.date);
@@ -535,7 +570,7 @@ function CalendarPageContent() {
                                       }
                                       setShowScheduleModal(true);
                                     }}
-                                    className="text-xs p-1.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-lg truncate cursor-pointer shadow-sm hover:shadow-md transition-shadow"
+                                    className="text-xs p-1.5 bg-gradient-to-r from-violet-600 via-fuchsia-500 to-rose-500 text-white rounded-lg truncate cursor-pointer shadow-sm hover:shadow-md transition-shadow"
                                   >
                                     {article.title}
                                   </motion.div>
@@ -647,6 +682,9 @@ function CalendarPageContent() {
                                       animate={{ opacity: 1, scale: 1, y: 0 }}
                                       exit={{ opacity: 0, scale: 0.8 }}
                                       whileHover={{ scale: 1.02 }}
+                                      draggable
+                                      onDragStart={(e: any) => handleDragStart(e, article)}
+                                      onDragEnd={() => setDraggedArticle(null)}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setArticleToSchedule(article);
@@ -657,7 +695,7 @@ function CalendarPageContent() {
                                         }
                                         setShowScheduleModal(true);
                                       }}
-                                      className="p-2 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-lg text-xs font-medium shadow-md hover:shadow-lg transition-shadow cursor-pointer"
+                                      className="p-2 bg-gradient-to-r from-violet-600 via-fuchsia-500 to-rose-500 text-white rounded-lg text-xs font-medium shadow-md hover:shadow-lg transition-shadow cursor-pointer"
                                     >
                                       <div className="flex items-center gap-1">
                                         <Clock className="w-3 h-3" />
@@ -786,7 +824,7 @@ function CalendarPageContent() {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => handleSchedule(articleToSchedule, selectedDate || new Date(), selectedTime)}
-                      className="flex-1 px-4 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center justify-center gap-2"
+                      className="flex-1 px-4 py-3 bg-gradient-to-r from-violet-600 via-fuchsia-500 to-rose-500 text-white rounded-xl font-semibold hover:shadow-lg transition-all flex items-center justify-center gap-2"
                     >
                       <CalendarIcon className="w-4 h-4" />
                       {articleToSchedule.status === "scheduled" ? "Update" : "Schedule"}

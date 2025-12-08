@@ -30,6 +30,8 @@ import CTAModal from "../../components/CTAModal";
 import CTAPreview from "../../components/CTAPreview";
 import { getUserApiKeys } from "../../lib/services/userKeys";
 
+const LAST_CONFIG_KEY = "lastGenerationConfig";
+
 export default function GeneratePage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
@@ -86,6 +88,9 @@ export default function GeneratePage() {
   const [showMissingKeysModal, setShowMissingKeysModal] = useState(false);
   const [isSavingArticle, setIsSavingArticle] = useState(false);
   const [savedArticleId, setSavedArticleId] = useState<string | null>(null);
+  const [autoSaveAttempted, setAutoSaveAttempted] = useState(false);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const [hasLoadedLastConfig, setHasLoadedLastConfig] = useState(false);
   const [missingKeys, setMissingKeys] = useState<
     { key: string; label: string; placeholder: string }[]
   >([]);
@@ -100,7 +105,7 @@ export default function GeneratePage() {
     }
   }, [user, authLoading, router]);
 
-  // Load params from URL or localStorage on mount
+  // Load params from URL or localStorage (pending generation) on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const searchParams = new URLSearchParams(window.location.search);
@@ -133,6 +138,7 @@ export default function GeneratePage() {
             button.click();
           }
         }, 500);
+        setInitialLoadComplete(true);
         return;
       }
 
@@ -175,8 +181,101 @@ export default function GeneratePage() {
           console.error("Error loading pending generation:", e);
         }
       }
+
+      setInitialLoadComplete(true);
     }
   }, []);
+
+  // Load last generation config (if no URL/pending override)
+  useEffect(() => {
+    if (!initialLoadComplete || hasLoadedLastConfig) return;
+    if (typeof window === "undefined") return;
+    // If user already has a topic (from URL/pending), skip loading last config
+    if (topic) {
+      setHasLoadedLastConfig(true);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(LAST_CONFIG_KEY);
+      if (!raw) return;
+      const cfg = JSON.parse(raw);
+      setTopic(cfg.topic || "");
+      setPublishToWordPress(!!cfg.publishToWordPress);
+      setResearchDepth(cfg.researchDepth || "moderate");
+      setNumberOfImages(cfg.numberOfImages || 0);
+      setExtraContext(cfg.extraContext || "");
+      setUseResearch(cfg.useResearch !== false);
+      setAiProvider(cfg.aiProvider || "openai");
+      setModel(cfg.model || "gpt-4o-mini");
+      setOpenaiModel(cfg.openaiModel || "gpt-4o-mini");
+      setGeminiModel(cfg.geminiModel || "gemini-2.5-pro");
+      setAnthropicModel(cfg.anthropicModel || "claude-opus-4");
+      setDeepseekModel(cfg.deepseekModel || "deepseek-r1");
+      setQwenModel(cfg.qwenModel || "qwen-qwq-32b-preview");
+      setGrokModel(cfg.grokModel || "grok-4");
+      setGpt5ReasoningEffort(cfg.gpt5ReasoningEffort || "medium");
+      setGpt5Verbosity(cfg.gpt5Verbosity || "medium");
+      setCtas(cfg.ctas || []);
+    } catch (e) {
+      console.error("Error loading last config:", e);
+    } finally {
+      setHasLoadedLastConfig(true);
+    }
+  }, [
+    initialLoadComplete,
+    hasLoadedLastConfig,
+    topic,
+    publishToWordPress,
+    researchDepth,
+    numberOfImages,
+  ]);
+
+  // Persist last config on change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const cfg = {
+      topic,
+      publishToWordPress,
+      researchDepth,
+      numberOfImages,
+      extraContext,
+      useResearch,
+      aiProvider,
+      model,
+      openaiModel,
+      geminiModel,
+      anthropicModel,
+      deepseekModel,
+      qwenModel,
+      grokModel,
+      gpt5ReasoningEffort,
+      gpt5Verbosity,
+      ctas,
+    };
+    try {
+      localStorage.setItem(LAST_CONFIG_KEY, JSON.stringify(cfg));
+    } catch (e) {
+      console.error("Error saving last config:", e);
+    }
+  }, [
+    topic,
+    publishToWordPress,
+    researchDepth,
+    numberOfImages,
+    extraContext,
+    useResearch,
+    aiProvider,
+    model,
+    openaiModel,
+    geminiModel,
+    anthropicModel,
+    deepseekModel,
+    qwenModel,
+    grokModel,
+    gpt5ReasoningEffort,
+    gpt5Verbosity,
+    ctas,
+  ]);
 
 
   const handleLogout = async () => {
@@ -311,6 +410,7 @@ export default function GeneratePage() {
     setIsGenerating(true);
     setResult(null);
     setSavedArticleId(null);
+    setAutoSaveAttempted(false);
     setProgress({
       step: "research",
       message: "Starting generation...",
@@ -548,6 +648,20 @@ export default function GeneratePage() {
       setIsSavingArticle(false);
     }
   };
+
+  // Auto-save as soon as an article is generated (once per generation)
+  useEffect(() => {
+    const shouldAutoSave =
+      !!result?.articleContent &&
+      !savedArticleId &&
+      !isSavingArticle &&
+      !autoSaveAttempted;
+
+    if (shouldAutoSave) {
+      setAutoSaveAttempted(true);
+      handleSaveArticle();
+    }
+  }, [result?.articleContent, savedArticleId, isSavingArticle, autoSaveAttempted]);
 
   const getStepIcon = (step: string) => {
     switch (step) {
