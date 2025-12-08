@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence, Reorder } from "framer-motion";
+import React, { useState, useEffect, Suspense } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft,
   ChevronRight,
@@ -31,7 +31,7 @@ const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEK_DAYS_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-export default function CalendarPage() {
+function CalendarPageContent() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -829,5 +829,24 @@ export default function CalendarPage() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// Wrapper with Suspense for useSearchParams
+export default function CalendarPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 flex items-center justify-center">
+          <motion.div
+            animate={{ rotate: 360 }}
+            transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+            className="w-12 h-12 border-4 border-slate-200 border-t-slate-900 rounded-full"
+          />
+        </div>
+      }
+    >
+      <CalendarPageContent />
+    </Suspense>
   );
 }
