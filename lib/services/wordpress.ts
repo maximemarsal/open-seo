@@ -44,9 +44,12 @@ export class WordPressService {
     status: "draft" | "publish" = "publish"
   ): Promise<{ postId: number; editUrl: string }> {
     try {
+      // Clean the HTML to avoid duplicate H1 when WordPress theme also renders the title
+      const cleanedHtml = this.stripLeadingTitle(content.html, seoMetadata.metaTitle);
+
       const post: WordPressPost = {
         title: seoMetadata.metaTitle,
-        content: content.html,
+        content: cleanedHtml,
         status,
         excerpt: seoMetadata.metaDescription,
         slug: seoMetadata.slug,
@@ -248,6 +251,37 @@ export class WordPressService {
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "");
+  }
+
+  // Remove a leading <h1> (or article/header wrapper) so WordPress doesn't show two titles
+  private stripLeadingTitle(html: string, title: string): string {
+    if (!html) return html;
+
+    let cleaned = html;
+
+    // Drop <header><h1>Title</h1></header> or similar blocks
+    cleaned = cleaned.replace(
+      new RegExp(
+        `<header[^>]*>\\s*<h1[^>]*>\\s*${this.escapeRegex(title)}\\s*<\\/h1>\\s*<\\/header>`,
+        "i"
+      ),
+      ""
+    );
+
+    // Drop a leading H1 even if not wrapped
+    cleaned = cleaned.replace(
+      new RegExp(`^\\s*<h1[^>]*>\\s*${this.escapeRegex(title)}\\s*<\\/h1>\\s*`, "i"),
+      ""
+    );
+
+    // Remove outer <article> tags if present
+    cleaned = cleaned.replace(/<article[^>]*>/i, "").replace(/<\/article>/i, "");
+
+    return cleaned.trim();
+  }
+
+  private escapeRegex(text: string): string {
+    return text.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
   }
 
   async testConnection(): Promise<{
