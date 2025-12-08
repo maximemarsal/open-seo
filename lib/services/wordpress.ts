@@ -262,13 +262,12 @@ export class WordPressService {
       .replace(/^-|-$/g, "");
   }
 
-  // Remove a leading <h1> (or article/header wrapper) so WordPress doesn't show two titles
+  // Remove any H1 blocks so WordPress theme title is not duplicated
   private stripLeadingTitle(html: string, title: string): string {
     if (!html) return html;
 
     let cleaned = html;
 
-    // Drop <header><h1>Title</h1></header> or similar blocks
     cleaned = cleaned.replace(
       new RegExp(
         `<header[^>]*>\\s*<h1[^>]*>\\s*${this.escapeRegex(title)}\\s*<\\/h1>\\s*<\\/header>`,
@@ -277,16 +276,14 @@ export class WordPressService {
       ""
     );
 
-    // Drop a leading H1 that matches the title
     cleaned = cleaned.replace(
       new RegExp(`^\\s*<h1[^>]*>\\s*${this.escapeRegex(title)}\\s*<\\/h1>\\s*`, "i"),
       ""
     );
 
-    // Drop the first leading H1 even if the text differs (theme already shows the title)
-    cleaned = cleaned.replace(/^\\s*<h1[^>]*>.*?<\\/h1>\\s*/i, "");
+    cleaned = cleaned.replace(/^\s*<h1[^>]*>.*?<\/h1>\s*/i, "");
+    cleaned = cleaned.replace(/<h1[^>]*>.*?<\/h1>/gi, "");
 
-    // Remove outer <article> tags if present
     cleaned = cleaned.replace(/<article[^>]*>/i, "").replace(/<\/article>/i, "");
 
     return cleaned.trim();
