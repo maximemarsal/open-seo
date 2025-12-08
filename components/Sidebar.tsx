@@ -29,6 +29,18 @@ export default function Sidebar() {
       path: "/generate",
     },
     {
+      id: "articles",
+      label: "Articles",
+      icon: FileText,
+      path: "/generate/articles",
+    },
+    {
+      id: "calendar",
+      label: "Calendar",
+      icon: Sparkles,
+      path: "/generate/calendar",
+    },
+    {
       id: "settings",
       label: "Settings",
       icon: Settings,

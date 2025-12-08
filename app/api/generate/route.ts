@@ -15,6 +15,10 @@ import { UnsplashService } from "../../../lib/services/unsplash";
 import { config as appConfig } from "../../../lib/config";
 import { verifyIdToken, getTokenFromHeader } from "../../../lib/auth-server";
 import { getUserApiKeysServer } from "../../../lib/services/userKeys.server";
+import {
+  createArticle,
+  ArticleStatus,
+} from "../../../lib/services/articles.server";
 
 // Helper function to parse and format error messages
 function parseErrorMessage(
@@ -579,6 +583,36 @@ export async function POST(request: NextRequest) {
 
           const perplexityTokens = researchData.usage?.totalTokens || 0;
           const totalTokens = aiGenerationTokens + perplexityTokens;
+
+          // Persist article for scheduling/listing
+          try {
+            const articleStatus: ArticleStatus = publishToWordPress && wordpressResult
+              ? "published"
+              : "draft";
+
+            await createArticle(userId, {
+              title: seoMetadata.metaTitle || topic,
+              topic,
+              slug: seoMetadata.slug,
+              status: articleStatus,
+              publishedAt:
+                articleStatus === "published"
+                  ? new Date().toISOString()
+                  : undefined,
+              wordpressPostId: wordpressResult?.postId,
+              wordpressEditUrl: wordpressResult?.editUrl,
+              contentHtml: contentWithImages.html,
+              wordCount: contentWithImages.wordCount,
+              seo: {
+                metaTitle: seoMetadata.metaTitle,
+                metaDescription: seoMetadata.metaDescription,
+                slug: seoMetadata.slug,
+                keywords: seoMetadata.keywords,
+              },
+            });
+          } catch (err) {
+            console.warn("Could not persist article record:", err);
+          }
 
           // Send final result
           sendComplete({
