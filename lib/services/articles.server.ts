@@ -156,10 +156,18 @@ export async function scheduleArticle(
   articleId: string,
   scheduledAt: string
 ): Promise<SavedArticle | null> {
-  return updateArticle(userId, articleId, {
+  const updated = await updateArticle(userId, articleId, {
     status: "scheduled",
     scheduledAt,
   });
+  if (updated) {
+    await upsertScheduledIndex({
+      userId,
+      articleId,
+      scheduledAt,
+    });
+  }
+  return updated;
 }
 
 /**
@@ -169,10 +177,14 @@ export async function unscheduleArticle(
   userId: string,
   articleId: string
 ): Promise<SavedArticle | null> {
-  return updateArticle(userId, articleId, {
+  const updated = await updateArticle(userId, articleId, {
     status: "draft",
-    scheduledAt: undefined,
+    scheduledAt: null,
   });
+  if (updated) {
+    await removeScheduledIndex(userId, articleId);
+  }
+  return updated;
 }
 
 /**
@@ -184,11 +196,41 @@ export async function markArticlePublished(
   wordpressPostId: number,
   wordpressEditUrl: string
 ): Promise<SavedArticle | null> {
-  return updateArticle(userId, articleId, {
+  const updated = await updateArticle(userId, articleId, {
     status: "published",
     publishedAt: new Date().toISOString(),
     wordpressPostId,
     wordpressEditUrl,
   });
+  if (updated) {
+    await removeScheduledIndex(userId, articleId);
+  }
+  return updated;
+}
+
+// Scheduled index helpers (global collection to avoid scanning all users)
+type ScheduledIndex = {
+  userId: string;
+  articleId: string;
+  scheduledAt: string;
+};
+
+async function upsertScheduledIndex(entry: ScheduledIndex) {
+  const docId = `${entry.userId}__${entry.articleId}`;
+  await adminDb.collection("scheduledArticles").doc(docId).set(entry);
+}
+
+async function removeScheduledIndex(userId: string, articleId: string) {
+  const docId = `${userId}__${articleId}`;
+  await adminDb.collection("scheduledArticles").doc(docId).delete();
+}
+
+export async function getScheduledArticlesDueIndexed(): Promise<ScheduledIndex[]> {
+  const now = new Date().toISOString();
+  const snap = await adminDb
+    .collection("scheduledArticles")
+    .where("scheduledAt", "<=", now)
+    .get();
+  return snap.docs.map((d) => d.data() as ScheduledIndex);
 }
 
