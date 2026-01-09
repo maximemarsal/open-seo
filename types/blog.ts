@@ -123,7 +123,7 @@ export interface SavedArticle {
   images?: ImageAsset[];
   wordCount: number;
   status: "draft" | "scheduled" | "published";
-  scheduledAt?: string; // ISO date string
+  scheduledAt?: string | null; // ISO date string
   publishedAt?: string; // ISO date string
   wordpressPostId?: number;
   wordpressEditUrl?: string;
