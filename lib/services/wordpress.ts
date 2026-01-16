@@ -41,11 +41,15 @@ export class WordPressService {
     content: BlogContent,
     seoMetadata: SEOMetadata,
     topic: string,
-    status: "draft" | "publish" = "publish"
+    status: "draft" | "publish" = "publish",
+    featuredImageUrl?: string
   ): Promise<{ postId: number; editUrl: string }> {
     try {
       // Clean the HTML to avoid duplicate H1 when WordPress theme also renders the title
       const cleanedHtml = this.stripLeadingTitle(content.html, seoMetadata.metaTitle);
+
+      // Extract first image from content if no featured image provided
+      const firstImageUrl = featuredImageUrl || this.extractFirstImageUrl(content.html);
 
       const post: WordPressPost = {
         title: seoMetadata.metaTitle,
@@ -71,6 +75,8 @@ export class WordPressService {
         title: post.title,
         content: post.content,
         status: post.status,
+        slug: post.slug,
+        excerpt: post.excerpt,
       });
 
       const postId = response.data.id;
@@ -82,18 +88,19 @@ export class WordPressService {
         const tags = await this.getOrCreateTags(seoMetadata.keywords);
 
         await this.wordpressApi.post(`/posts/${postId}`, {
-          excerpt: post.excerpt,
-          slug: post.slug,
-          meta: post.meta,
           categories,
           tags,
         });
       } catch (updateError) {
         console.warn("Created draft but failed to update with full details:", updateError);
-        // We don't throw here, returning the draft is better than failing completely
       }
 
-      // Add SEO metadata if Yoast is available
+      // 3. Set featured image from first image in content
+      if (firstImageUrl) {
+        await this.setFeaturedImageFromUrl(postId, firstImageUrl, seoMetadata.metaTitle);
+      }
+
+      // 4. Add SEO metadata if Yoast is available
       await this.addYoastSEO(postId, seoMetadata);
 
       return {
@@ -116,23 +123,35 @@ export class WordPressService {
     }
   }
 
+  // Extract first image URL from HTML content
+  private extractFirstImageUrl(html: string): string | null {
+    if (!html) return null;
+    const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+    return imgMatch ? imgMatch[1] : null;
+  }
+
   async setFeaturedImageFromUrl(
     postId: number,
     imageUrl: string,
     alt: string
   ): Promise<void> {
     try {
-      // Fetch image bytes
-      const img = await this.wordpressApi.get(imageUrl, {
+      // Fetch image bytes from external URL
+      const img = await axios.get(imageUrl, {
         responseType: "arraybuffer",
+        timeout: 30000,
       });
 
+      // Determine content type and file extension
+      const contentType = img.headers["content-type"] || "image/jpeg";
+      const extension = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+      const fileName = `cover-${postId}-${Date.now()}.${extension}`;
+
       // Upload to WP media library
-      const fileName = `cover-${postId}.jpg`;
       const mediaResponse = await this.wordpressApi.post("/media", img.data, {
         headers: {
           "Content-Disposition": `attachment; filename="${fileName}"`,
-          "Content-Type": "image/jpeg",
+          "Content-Type": contentType,
         },
       });
 
@@ -141,14 +160,18 @@ export class WordPressService {
       // Update alt text
       try {
         await this.wordpressApi.post(`/media/${mediaId}`, { alt_text: alt });
-      } catch {}
+      } catch (altError) {
+        console.warn("Failed to set alt text:", altError);
+      }
 
       // Attach as featured image
       await this.wordpressApi.post(`/posts/${postId}`, {
         featured_media: mediaId,
       });
-    } catch (error) {
-      console.warn("Failed to set featured image:", error);
+
+      console.log(`Featured image set successfully for post ${postId}`);
+    } catch (error: any) {
+      console.warn("Failed to set featured image:", error?.message || error);
     }
   }
 
@@ -156,26 +179,59 @@ export class WordPressService {
     postId: number,
     seoMetadata: SEOMetadata
   ): Promise<void> {
-    try {
-      // Try to update Yoast SEO meta fields
-      await this.wordpressApi.post(`/posts/${postId}/meta`, {
+    const yoastMeta = {
+      yoast_head_json: {
+        title: seoMetadata.metaTitle,
+        description: seoMetadata.metaDescription,
+      },
+      meta: {
         _yoast_wpseo_title: seoMetadata.metaTitle,
         _yoast_wpseo_metadesc: seoMetadata.metaDescription,
-        _yoast_wpseo_focuskw: seoMetadata.keywords[0],
-        _yoast_wpseo_linkdex: "75", // Good SEO score
+        _yoast_wpseo_focuskw: seoMetadata.keywords[0] || "",
+      },
+    };
+
+    // Method 1: Try updating via post endpoint with meta field
+    try {
+      await this.wordpressApi.post(`/posts/${postId}`, {
+        meta: yoastMeta.meta,
       });
+      console.log("Yoast meta updated via post endpoint");
+      return;
     } catch (error: any) {
-      const status = error?.response?.status;
-      const code = error?.response?.data?.code;
-      // If the Yoast REST route is unavailable, don't block publication
-      if (status === 404 || code === "rest_no_route") {
-        console.warn(
-          "Yoast REST meta endpoint not found; skipping Yoast metadata. Ensure the Yoast REST API is enabled."
-        );
-        return;
-      }
-      // Yoast SEO might not be installed or access is blocked; continue without it
-      console.warn("Could not add Yoast SEO metadata:", error);
+      console.warn("Method 1 (post meta) failed:", error?.response?.data?.message || error.message);
+    }
+
+    // Method 2: Try Yoast's own REST API endpoint (if available)
+    try {
+      // Yoast uses a different base path: /wp-json/yoast/v1/
+      await axios.post(
+        `${this.credentials.url}/wp-json/yoast/v1/posts/${postId}`,
+        {
+          wpseo_title: seoMetadata.metaTitle,
+          wpseo_metadesc: seoMetadata.metaDescription,
+          wpseo_focuskw: seoMetadata.keywords[0] || "",
+        },
+        {
+          auth: {
+            username: this.credentials.username,
+            password: this.credentials.password,
+          },
+        }
+      );
+      console.log("Yoast meta updated via Yoast REST API");
+      return;
+    } catch (error: any) {
+      console.warn("Method 2 (Yoast API) failed:", error?.response?.data?.message || error.message);
+    }
+
+    // Method 3: Direct meta endpoint
+    try {
+      await this.wordpressApi.post(`/posts/${postId}/meta`, yoastMeta.meta);
+      console.log("Yoast meta updated via direct meta endpoint");
+    } catch (error: any) {
+      console.warn("Method 3 (direct meta) failed:", error?.response?.data?.message || error.message);
+      console.warn("Could not add Yoast SEO metadata - you may need to add it manually or check Yoast REST API settings");
     }
   }
 
