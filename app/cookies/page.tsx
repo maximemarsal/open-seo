@@ -1,8 +1,8 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Cookie Policy | BlogGen AI",
-  description: "Cookie Policy for BlogGen AI - Learn about how we use cookies",
+  title: "Cookie Policy | Open SEO",
+  description: "Cookie Policy for Open SEO - Learn about how we use cookies",
 };
 
 export default function CookiePolicy() {
@@ -28,7 +28,7 @@ export default function CookiePolicy() {
           <section>
             <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">2. How We Use Cookies</h2>
             <p>
-              BlogGen AI uses cookies for the following purposes:
+              Open SEO uses cookies for the following purposes:
             </p>
 
             <h3 className="text-xl font-semibold text-gray-900 mt-6 mb-3">2.1 Essential Cookies</h3>

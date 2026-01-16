@@ -32,7 +32,7 @@ export class WordPressService {
       },
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "BlogGeneratorAI/1.0",
+        "User-Agent": "OpenSEO/1.0",
       },
     });
   }
@@ -63,7 +63,7 @@ export class WordPressService {
           _yoast_wpseo_focuskw: seoMetadata.keywords[0] || topic,
           _yoast_wpseo_meta_robots_noindex: "0",
           _yoast_wpseo_meta_robots_nofollow: "0",
-          generated_by: "Blog Generator AI",
+          generated_by: "Open SEO",
           generation_date: new Date().toISOString(),
           source_topic: topic,
           word_count: content.wordCount.toString(),

@@ -1,8 +1,8 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Terms of Service | BlogGen AI",
-  description: "Terms of Service for BlogGen AI - Read our terms and conditions",
+  title: "Terms of Service | Open SEO",
+  description: "Terms of Service for Open SEO - Read our terms and conditions",
 };
 
 export default function TermsOfService() {
@@ -18,7 +18,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">1. Acceptance of Terms</h2>
             <p>
-              By accessing or using BlogGen AI ("the Service"), you agree to be bound by these Terms of Service ("Terms"). If you disagree with any part of these terms, you may not access the Service.
+              By accessing or using Open SEO ("the Service"), you agree to be bound by these Terms of Service ("Terms"). If you disagree with any part of these terms, you may not access the Service.
             </p>
             <p>
               These Terms apply to all users of the Service, including without limitation users who are browsers, vendors, customers, merchants, and contributors of content.
@@ -28,7 +28,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">2. Description of Service</h2>
             <p>
-              BlogGen AI is a platform that enables users to generate SEO-optimized blog articles using artificial intelligence. The Service:
+              Open SEO is a platform that enables users to generate SEO-optimized blog articles using artificial intelligence. The Service:
             </p>
             <ul className="list-disc pl-6 space-y-2">
               <li>Uses your own API keys to connect to AI providers (OpenAI, Anthropic, Gemini, Perplexity, etc.)</li>
@@ -37,7 +37,7 @@ export default function TermsOfService() {
               <li>Provides SEO optimization and metadata generation</li>
             </ul>
             <p className="mt-4">
-              <strong>Important:</strong> BlogGen AI is provided free of charge. You pay directly to AI service providers for API usage. We do not charge subscription fees or markup on API costs.
+              <strong>Important:</strong> Open SEO is provided free of charge. You pay directly to AI service providers for API usage. We do not charge subscription fees or markup on API costs.
             </p>
           </section>
 
@@ -151,7 +151,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">8. Fees and Payment</h2>
             <p>
-              <strong>BlogGen AI is free to use.</strong> We do not charge subscription fees, usage fees, or any other charges.
+              <strong>Open SEO is free to use.</strong> We do not charge subscription fees, usage fees, or any other charges.
             </p>
             <p>
               You pay directly to AI service providers (OpenAI, Anthropic, etc.) for API usage. Typical costs range from $0.01 to $0.05 per article, depending on the AI model and article length.
@@ -195,7 +195,7 @@ export default function TermsOfService() {
           <section>
             <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">11. Indemnification</h2>
             <p>
-              You agree to indemnify, defend, and hold harmless BlogGen AI and its officers, directors, employees, and agents from any claims, damages, losses, liabilities, and expenses (including legal fees) arising from:
+              You agree to indemnify, defend, and hold harmless Open SEO and its officers, directors, employees, and agents from any claims, damages, losses, liabilities, and expenses (including legal fees) arising from:
             </p>
             <ul className="list-disc pl-6 space-y-2">
               <li>Your use of the Service</li>

@@ -1,42 +1,37 @@
 #!/bin/bash
 
-echo "🚀 Blog Generator AI - Démarrage du mode développement"
-echo "=================================================="
+echo "🚀 Open SEO - Starting development server"
+echo "=========================================="
 
-# Vérifier si .env.local existe
+# Check if .env.local exists
 if [ ! -f .env.local ]; then
-    echo "⚠️  Fichier .env.local non trouvé"
-    echo "📋 Création du fichier .env.local depuis env.example..."
+    echo "⚠️  .env.local file not found"
+    echo "📋 Creating .env.local from env.example..."
     cp env.example .env.local
-    echo "✅ Fichier .env.local créé"
-    echo "🔧 Veuillez éditer .env.local avec vos clés API avant de continuer"
+    echo "✅ .env.local created"
+    echo "🔧 Please edit .env.local with your Firebase credentials before continuing"
     echo ""
-    echo "Clés requises :"
-    echo "- OPENAI_API_KEY"
-    echo "- PERPLEXITY_API_KEY"
-    echo "- WORDPRESS_* (optionnel, pour publication auto)"
+    echo "Required keys:"
+    echo "- NEXT_PUBLIC_FIREBASE_* (Firebase config)"
+    echo "- FIREBASE_CLIENT_EMAIL (Admin SDK)"
+    echo "- FIREBASE_PRIVATE_KEY (Admin SDK)"
     echo ""
-    read -p "Appuyez sur Entrée après avoir configuré .env.local..."
+    read -p "Press Enter after configuring .env.local..."
 fi
 
-echo "📦 Installation des dépendances..."
+echo "📦 Installing dependencies..."
 npm install
 
-echo "🔍 Vérification de la configuration..."
-# Vérifier les variables d'environnement essentielles
-if [ -z "$OPENAI_API_KEY" ] && ! grep -q "OPENAI_API_KEY=" .env.local; then
-    echo "❌ OPENAI_API_KEY manquante"
-    exit 1
-fi
-
-if [ -z "$PERPLEXITY_API_KEY" ] && ! grep -q "PERPLEXITY_API_KEY=" .env.local; then
-    echo "❌ PERPLEXITY_API_KEY manquante"
+echo "🔍 Checking configuration..."
+# Check essential environment variables
+if ! grep -q "NEXT_PUBLIC_FIREBASE_API_KEY=" .env.local; then
+    echo "❌ Firebase configuration missing"
     exit 1
 fi
 
 echo "✅ Configuration OK"
-echo "🌐 Démarrage du serveur de développement..."
-echo "📱 L'application sera disponible sur http://localhost:3000"
+echo "🌐 Starting development server..."
+echo "📱 App will be available at http://localhost:3000"
 echo ""
 
 npm run dev

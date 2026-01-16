@@ -86,7 +86,7 @@ export default function Sidebar() {
               >
                 <Sparkles className="w-6 h-6 text-gray-900" />
                 <span className="text-xl font-bold text-gray-900">
-                  BlogGen AI
+                  Open SEO
                 </span>
               </motion.div>
             )}

@@ -47,3 +47,18 @@ Thumbs.db
 # Logs
 logs
 *.log
+generation.log
+
+# Dev notes (keep these out of git)
+CHANGES_SUMMARY.txt
+FEATURE_API_KEY_HELP.md
+FINAL_FIXES.md
+IMPROVEMENTS_SUMMARY.md
+LATEST_CHANGES.txt
+NEW_UX_FLOW.txt
+QUICKSTART.txt
+SIDEBAR_NAVIGATION.txt
+TEST_GUIDE.md
+
+# Backup files
+*.bak

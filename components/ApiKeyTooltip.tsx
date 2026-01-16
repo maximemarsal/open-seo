@@ -145,7 +145,7 @@ const API_INSTRUCTIONS: Record<
       "Go to Users → Your Profile",
       "Find your Username at the top (this is what you'll use in the settings)",
       "Scroll down to 'Application Passwords' section",
-      "Enter a name (e.g., 'Blog Generator AI')",
+      "Enter a name (e.g., 'Open SEO')",
       "Click 'Add New Application Password'",
       "Copy the generated password (format: xxxx xxxx xxxx xxxx)",
     ],

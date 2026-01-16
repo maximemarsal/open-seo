@@ -1,8 +1,8 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | BlogGen AI",
-  description: "Privacy Policy for BlogGen AI - Learn how we protect your data and API keys",
+  title: "Privacy Policy | Open SEO",
+  description: "Privacy Policy for Open SEO - Learn how we protect your data and API keys",
 };
 
 export default function PrivacyPolicy() {
@@ -18,10 +18,10 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-2xl font-bold text-gray-900 mt-8 mb-4">1. Introduction</h2>
             <p>
-              Welcome to BlogGen AI ("we," "our," or "us"). We are committed to protecting your privacy and ensuring the security of your personal information and API keys. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our service.
+              Welcome to Open SEO ("we," "our," or "us"). We are committed to protecting your privacy and ensuring the security of your personal information and API keys. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our service.
             </p>
             <p>
-              By using BlogGen AI, you agree to the collection and use of information in accordance with this policy. If you do not agree with our policies and practices, please do not use our service.
+              By using Open SEO, you agree to the collection and use of information in accordance with this policy. If you do not agree with our policies and practices, please do not use our service.
             </p>
           </section>
 
