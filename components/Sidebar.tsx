@@ -11,6 +11,7 @@ import {
   LogOut,
   FolderOpen,
   Calendar,
+  Layers,
 } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "../contexts/AuthContext";
@@ -29,6 +30,12 @@ export default function Sidebar() {
       label: "Post Creation",
       icon: FileText,
       path: "/generate",
+    },
+    {
+      id: "bulk",
+      label: "Bulk Generation",
+      icon: Layers,
+      path: "/generate/bulk",
     },
     {
       id: "articles",
