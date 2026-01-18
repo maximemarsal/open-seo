@@ -1,0 +1,15 @@
+# Open SEO - robots.txt
+# https://open-seo-production.up.railway.app
+
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://open-seo-production.up.railway.app/sitemap.xml
+
+# Disallow API routes
+Disallow: /api/
+Disallow: /generate/settings
+Disallow: /generate/articles
+Disallow: /generate/calendar
+Disallow: /generate/bulk
