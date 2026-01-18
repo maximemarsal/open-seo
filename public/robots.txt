@@ -1,13 +1,13 @@
 # Open SEO - robots.txt
-# https://open-seo-production.up.railway.app
+# https://open-seo.tech
 
 User-agent: *
 Allow: /
 
 # Sitemap location
-Sitemap: https://open-seo-production.up.railway.app/sitemap.xml
+Sitemap: https://open-seo.tech/sitemap.xml
 
-# Disallow API routes
+# Disallow API routes and private pages
 Disallow: /api/
 Disallow: /generate/settings
 Disallow: /generate/articles

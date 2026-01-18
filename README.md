@@ -32,7 +32,7 @@
 
 ## 🖥️ Demo
 
-Try it live: [https://open-seo-production.up.railway.app](https://open-seo-production.up.railway.app)
+Try it live: [https://open-seo.tech](https://open-seo.tech)
 
 ## 🚀 Quick Start
 
@@ -138,7 +138,7 @@ For scheduled articles to be published automatically, you need an external cron 
 
 1. Create account at [cron-job.org](https://cron-job.org)
 2. Add a new cron job:
-   - **URL**: `https://your-app.railway.app/api/cron/publish-due`
+   - **URL**: `https://open-seo.tech/api/cron/publish-due` (or your domain)
    - **Method**: GET
    - **Schedule**: `*/5 * * * *` (every 5 minutes)
    - **Header**: `Authorization: Bearer YOUR_CRON_SECRET`

@@ -23,18 +23,18 @@ export default function RootLayout({
         
         {/* Open Graph / Social Media */}
         <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://open-seo-production.up.railway.app/" />
+        <meta property="og:url" content="https://open-seo.tech/" />
         <meta property="og:title" content="Open SEO - Free AI-Powered Blog Article Generator" />
         <meta property="og:description" content="Generate high-quality, SEO-optimized blog articles using AI. Free, open source, and supports multiple AI providers." />
-        <meta property="og:image" content="https://open-seo-production.up.railway.app/images/Logo vert Open-SEO.png" />
+        <meta property="og:image" content="https://open-seo.tech/images/Logo vert Open-SEO.png" />
         <meta property="og:site_name" content="Open SEO" />
         
         {/* Twitter Card */}
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:url" content="https://open-seo-production.up.railway.app/" />
+        <meta name="twitter:url" content="https://open-seo.tech/" />
         <meta name="twitter:title" content="Open SEO - Free AI-Powered Blog Article Generator" />
         <meta name="twitter:description" content="Generate high-quality, SEO-optimized blog articles using AI. Free, open source, and supports multiple AI providers." />
-        <meta name="twitter:image" content="https://open-seo-production.up.railway.app/images/Logo vert Open-SEO.png" />
+        <meta name="twitter:image" content="https://open-seo.tech/images/Logo vert Open-SEO.png" />
         
         {/* Favicon */}
         <link rel="icon" type="image/png" href="/images/Logo vert Open-SEO.png" />
@@ -44,7 +44,7 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
         
         {/* Canonical URL */}
-        <link rel="canonical" href="https://open-seo-production.up.railway.app/" />
+        <link rel="canonical" href="https://open-seo.tech/" />
         
         {/* Theme color */}
         <meta name="theme-color" content="#10B981" />
