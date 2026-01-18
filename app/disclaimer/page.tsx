@@ -174,7 +174,7 @@ export default function Disclaimer() {
             </p>
             <div className="bg-gray-50 p-4 rounded-lg mt-4">
               <p className="font-semibold">Email:</p>
-              <p>support@bloggen.ai</p>
+              <p>contact@open-seo.tech</p>
             </div>
           </section>
         </div>
