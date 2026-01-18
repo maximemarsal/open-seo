@@ -45,7 +45,7 @@ Try it live: [https://open-seo.tech](https://open-seo.tech)
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/Maximemusic/open-seo.git
+git clone https://github.com/maximemarsal/open-seo.git
 cd open-seo
 ```
 
@@ -241,12 +241,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 📖 [Documentation](https://github.com/Maximemusic/open-seo/wiki)
-- 🐛 [Report a Bug](https://github.com/Maximemusic/open-seo/issues)
-- 💡 [Request a Feature](https://github.com/Maximemusic/open-seo/issues)
+- 📖 [Documentation](https://github.com/maximemarsal/open-seo/wiki)
+- 🐛 [Report a Bug](https://github.com/maximemarsal/open-seo/issues)
+- 💡 [Request a Feature](https://github.com/maximemarsal/open-seo/issues)
 
 ---
 
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/Maximemusic">Maxime Marsal</a>
+  Made with ❤️ by <a href="https://github.com/maximemarsal">Maxime Marsal</a>
 </p>

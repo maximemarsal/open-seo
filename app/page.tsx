@@ -243,7 +243,7 @@ export default function Home() {
           >
             {/* GitHub Link */}
             <a
-              href="https://github.com/Maximemusic/open-seo"
+              href="https://github.com/maximemarsal/open-seo"
               target="_blank"
               rel="noopener noreferrer"
               className="hidden sm:flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 transition-colors"
@@ -2286,7 +2286,7 @@ export default function Home() {
                 Open SEO
               </span>
               <a
-                href="https://github.com/Maximemusic/open-seo"
+                href="https://github.com/maximemarsal/open-seo"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="ml-2 flex items-center gap-1 px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full text-gray-700 text-sm font-medium transition-colors"
