@@ -42,6 +42,9 @@ export default function CTAModal({
   const [sectionNumber, setSectionNumber] = useState(
     existingCTA?.sectionNumber || 1
   );
+  const [randomCount, setRandomCount] = useState(
+    existingCTA?.randomCount || 1
+  );
   const [style, setStyle] = useState<CTA["style"]>(
     existingCTA?.style || "default"
   );
@@ -99,6 +102,7 @@ export default function CTAModal({
       setButtonUrl(existingCTA.buttonUrl || "");
       setPositionType(existingCTA.positionType || "after-intro");
       setSectionNumber(existingCTA.sectionNumber || 1);
+      setRandomCount(existingCTA.randomCount || 1);
       setStyle(existingCTA.style || "default");
       setImageUrl(existingCTA.imageUrl || "");
       setCustomColors(
@@ -126,6 +130,7 @@ export default function CTAModal({
       setButtonUrl(template.cta.buttonUrl || "");
       setPositionType(template.cta.positionType || "after-intro");
       setSectionNumber(template.cta.sectionNumber || 1);
+      setRandomCount(template.cta.randomCount || 1);
       setStyle(template.cta.style || "default");
       setImageUrl(template.cta.imageUrl || "");
       if (template.cta.customColors) {
@@ -246,6 +251,8 @@ export default function CTAModal({
       positionType,
       sectionNumber:
         positionType === "after-section" ? sectionNumber : undefined,
+      randomCount:
+        positionType === "random" ? Math.min(Math.max(randomCount, 1), 3) : undefined,
       style,
       customColors: style === "custom" ? customColors : undefined,
     };
@@ -278,6 +285,7 @@ export default function CTAModal({
     setButtonUrl("");
     setPositionType("after-intro");
     setSectionNumber(1);
+    setRandomCount(1);
     setStyle("default");
     setImageUrl("");
     setImageFile(null);
@@ -298,6 +306,7 @@ export default function CTAModal({
     imageUrl,
     positionType,
     sectionNumber: positionType === "after-section" ? sectionNumber : undefined,
+    randomCount: positionType === "random" ? randomCount : undefined,
     style,
     customColors: style === "custom" ? customColors : undefined,
   };
@@ -735,6 +744,7 @@ export default function CTAModal({
                     <option value="middle">Middle of Article (Auto)</option>
                     <option value="before-conclusion">Before Conclusion</option>
                     <option value="end">End of Article</option>
+                    <option value="random">Random Positions</option>
                   </select>
 
                   <AnimatePresence>
@@ -761,6 +771,37 @@ export default function CTAModal({
                         />
                         <p className="text-xs text-gray-500 mt-1">
                           Will adapt if the article has fewer sections
+                        </p>
+                      </motion.div>
+                    )}
+                    {positionType === "random" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-3"
+                      >
+                        <label className="block text-xs font-medium text-gray-600 mb-2">
+                          How many times?
+                        </label>
+                        <div className="flex items-center gap-3">
+                          {[1, 2, 3].map((count) => (
+                            <button
+                              key={count}
+                              type="button"
+                              onClick={() => setRandomCount(count)}
+                              className={`flex-1 py-3 rounded-xl font-semibold transition-all ${
+                                randomCount === count
+                                  ? "bg-gray-900 text-white"
+                                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                              }`}
+                            >
+                              {count}×
+                            </button>
+                          ))}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">
+                          The CTA will appear at {randomCount} random position{randomCount > 1 ? "s" : ""} in the article (never at the same spot)
                         </p>
                       </motion.div>
                     )}

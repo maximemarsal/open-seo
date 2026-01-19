@@ -817,26 +817,15 @@ function generateCTAHtml(cta: CTA): string {
 
   const styles = getStyleClasses();
 
-  return `
-<div class="cta-block" style="${styles.container} padding: 2rem; border-radius: 1rem; margin: 2rem 0; ${imageUrl ? 'display: flex; gap: 1.5rem; align-items: center;' : ''}">
-  ${imageUrl ? `
-  <div style="flex-shrink: 0;">
-    <img src="${imageUrl}" alt="${escapeHtml(title || 'CTA')}" style="width: 150px; height: 150px; object-fit: cover; border-radius: 0.75rem;" />
-  </div>` : ''}
-  <div style="flex: 1;">
-    <h3 style="${styles.title} font-size: 1.5rem; font-weight: bold; margin: 0 0 0.75rem 0;">
-      ${escapeHtml(title || '')}
-    </h3>
-    <p style="${styles.description} margin: 0 0 1.5rem 0; line-height: 1.6;">
-      ${escapeHtml(description || '')}
-    </p>
-    ${buttonUrl ? `
-    <a href="${escapeHtml(buttonUrl)}" target="_blank" rel="noopener noreferrer" style="${styles.button} display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; border-radius: 0.75rem; font-weight: 600; transition: all 0.2s;">
-      ${escapeHtml(buttonText || 'Learn More')}
-      <span style="font-size: 1rem;">→</span>
-    </a>` : ''}
-  </div>
-</div>`;
+  const imageHtml = imageUrl 
+    ? `<div style="flex-shrink: 0;"><img src="${imageUrl}" alt="${escapeHtml(title || 'CTA')}" style="width: 150px; height: 150px; object-fit: cover; border-radius: 0.75rem;" /></div>` 
+    : '';
+
+  const buttonHtml = buttonUrl 
+    ? `<a href="${escapeHtml(buttonUrl)}" target="_blank" rel="noopener noreferrer" style="${styles.button} display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.5rem; border-radius: 0.75rem; font-weight: 600; transition: all 0.2s;">${escapeHtml(buttonText || 'Learn More')} <span style="font-size: 1rem;">→</span></a>` 
+    : '';
+
+  return `<div class="cta-block" style="${styles.container} padding: 2rem; border-radius: 1rem; margin: 2rem 0; ${imageUrl ? 'display: flex; gap: 1.5rem; align-items: center;' : ''}">${imageHtml}<div style="flex: 1;"><h3 style="${styles.title} font-size: 1.5rem; font-weight: bold; margin: 0 0 0.75rem 0;">${escapeHtml(title || '')}</h3><p style="${styles.description} margin: 0 0 1.5rem 0; line-height: 1.6;">${escapeHtml(description || '')}</p>${buttonHtml}</div></div>`;
 }
 
 // Inject CTAs into the article at specified positions
@@ -849,16 +838,60 @@ function injectCTAsIntoArticle(
 
   // Split HTML by h2 tags (sections) and h1 (title)
   const parts = html.split(/(<h[12][^>]*>.*?<\/h[12]>)/i);
-  let result = "";
-  
-  // Track sections
-  let currentSection = 0; // Start at 0, will increment as we find h2s
-  let totalH2Found = 0;
   
   // First pass: count total h2s to calculate positions
   const h2Count = (html.match(/<h2[^>]*>/gi) || []).length;
   const middleSection = Math.floor(h2Count / 2);
   const beforeConclusionSection = Math.max(0, h2Count - 1);
+  
+  // Expand random CTAs into multiple CTAs with specific positions
+  const expandedCtas: CTA[] = [];
+  const usedPositions = new Set<string>(); // Track used positions to avoid duplicates
+  
+  // All possible position slots for random placement
+  const allPositionSlots = [
+    { type: "after-intro", key: "after-intro" },
+    ...Array.from({ length: h2Count }, (_, i) => ({ type: "after-section", section: i + 1, key: `section-${i + 1}` })),
+    { type: "end", key: "end" }
+  ];
+  
+  for (const cta of ctas) {
+    if (cta.positionType === "random") {
+      const count = Math.min(Math.max(cta.randomCount || 1, 1), 3);
+      
+      // Filter out already used positions
+      const availableSlots = allPositionSlots.filter(slot => !usedPositions.has(slot.key));
+      
+      // Shuffle available slots and pick 'count' random ones
+      const shuffled = [...availableSlots].sort(() => Math.random() - 0.5);
+      const selectedSlots = shuffled.slice(0, Math.min(count, availableSlots.length));
+      
+      // Create expanded CTAs for each selected position
+      for (const slot of selectedSlots) {
+        usedPositions.add(slot.key);
+        
+        if (slot.type === "after-intro") {
+          expandedCtas.push({ ...cta, positionType: "after-intro" });
+        } else if (slot.type === "after-section" && "section" in slot) {
+          expandedCtas.push({ ...cta, positionType: "after-section", sectionNumber: slot.section });
+        } else if (slot.type === "end") {
+          expandedCtas.push({ ...cta, positionType: "end" });
+        }
+      }
+    } else {
+      // Mark this position as used
+      if (cta.positionType === "after-section") {
+        usedPositions.add(`section-${cta.sectionNumber || 1}`);
+      } else {
+        usedPositions.add(cta.positionType);
+      }
+      expandedCtas.push(cta);
+    }
+  }
+  
+  let result = "";
+  let currentSection = 0;
+  let totalH2Found = 0;
   
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -877,7 +910,7 @@ function injectCTAsIntoArticle(
       // Determine which CTAs to inject at this position
       const ctasToInject: CTA[] = [];
       
-      for (const cta of ctas) {
+      for (const cta of expandedCtas) {
         let shouldInject = false;
         
         switch (cta.positionType) {

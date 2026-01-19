@@ -96,8 +96,9 @@ export interface CTA {
   buttonUrl?: string;
   imageUrl?: string;
   imageFile?: File;
-  positionType: "after-intro" | "after-section" | "middle" | "before-conclusion" | "end";
-  sectionNumber?: number; // Utilisé uniquement si positionType === "after-section"
+  positionType: "after-intro" | "after-section" | "middle" | "before-conclusion" | "end" | "random";
+  sectionNumber?: number; // Used only if positionType === "after-section"
+  randomCount?: number; // Used only if positionType === "random" (1-3)
   style: "default" | "bordered" | "gradient" | "minimal" | "custom";
   customColors?: {
     background?: string;

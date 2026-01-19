@@ -1138,6 +1138,8 @@ export default function GeneratePage() {
                               {cta.positionType === "before-conclusion" &&
                                 "Before Conclusion"}
                               {cta.positionType === "end" && "End of Article"}
+                              {cta.positionType === "random" &&
+                                `Random (${cta.randomCount || 1}×)`}
                             </span>
                             <span className="text-xs text-gray-400">•</span>
                             <span className="text-xs text-gray-500 capitalize">
