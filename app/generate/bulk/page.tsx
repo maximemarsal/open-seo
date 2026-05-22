@@ -15,6 +15,9 @@ import {
   Play,
   Pause,
   RotateCcw,
+  Sparkles,
+  Calendar,
+  X,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
@@ -37,7 +40,20 @@ interface GenerationConfig {
   useResearch: boolean;
   researchDepth: "shallow" | "moderate" | "deep";
   numberOfImages: number;
+  autoSchedule: boolean;
+  intervalDays: number;
+  startDate: string; // YYYY-MM-DD
+  publishTime: string; // HH:MM
+  delayMs: number; // delay between generations (rate-limit safety)
 }
+
+const todayYmd = () => {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+};
 
 export default function BulkGeneratePage() {
   const { user, loading: authLoading } = useAuth();
@@ -54,7 +70,20 @@ export default function BulkGeneratePage() {
     useResearch: true,
     researchDepth: "moderate",
     numberOfImages: 0,
+    autoSchedule: false,
+    intervalDays: 3,
+    startDate: todayYmd(),
+    publishTime: "09:00",
+    delayMs: 2000,
   });
+
+  // Generate-ideas modal state
+  const [isIdeasOpen, setIsIdeasOpen] = useState(false);
+  const [ideasCount, setIdeasCount] = useState(10);
+  const [isLoadingIdeas, setIsLoadingIdeas] = useState(false);
+  const [ideas, setIdeas] = useState<{ title: string; selected: boolean }[]>(
+    []
+  );
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -62,6 +91,38 @@ export default function BulkGeneratePage() {
       router.push("/");
     }
   }, [user, authLoading, router]);
+
+  // Persist topics in localStorage so accidental refresh doesn't wipe the queue
+  const storageKey = user ? `bulkQueue.${user.uid}` : null;
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as BulkTopic[];
+        if (Array.isArray(parsed)) {
+          // Reset any in-flight statuses
+          const sanitized = parsed.map((t) =>
+            t.status === "generating" ? { ...t, status: "pending" as const } : t
+          );
+          setTopics(sanitized);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to restore bulk queue:", err);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(topics));
+    } catch (err) {
+      // localStorage may be full or unavailable — non-fatal
+    }
+  }, [topics, storageKey]);
 
   const addTopic = () => {
     if (!newTopic.trim()) {
@@ -102,7 +163,18 @@ export default function BulkGeneratePage() {
     );
   };
 
-  const generateSingleArticle = async (topicItem: BulkTopic): Promise<boolean> => {
+  const computeScheduledAt = (index: number): string => {
+    const [hh, mm] = (config.publishTime || "09:00").split(":");
+    const base = new Date(`${config.startDate}T00:00:00`);
+    base.setHours(parseInt(hh, 10) || 9, parseInt(mm, 10) || 0, 0, 0);
+    base.setDate(base.getDate() + index * (config.intervalDays || 3));
+    return base.toISOString();
+  };
+
+  const generateSingleArticle = async (
+    topicItem: BulkTopic,
+    scheduleIndex: number
+  ): Promise<boolean> => {
     updateTopicStatus(topicItem.id, {
       status: "generating",
       progress: 0,
@@ -188,6 +260,27 @@ export default function BulkGeneratePage() {
                 if (saveResponse.ok) {
                   const saveData = await saveResponse.json();
                   articleId = saveData.article.id;
+
+                  // Auto-schedule if enabled
+                  if (config.autoSchedule && articleId) {
+                    try {
+                      const scheduledAt = computeScheduledAt(scheduleIndex);
+                      await fetch(`/api/articles/${articleId}/schedule`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization: `Bearer ${idToken}`,
+                        },
+                        body: JSON.stringify({ scheduledAt }),
+                      });
+                    } catch (scheduleErr) {
+                      console.warn(
+                        "Auto-schedule failed for article",
+                        articleId,
+                        scheduleErr
+                      );
+                    }
+                  }
                 }
               } else if (data.type === "error") {
                 throw new Error(data.payload.message || "Generation error");
@@ -255,22 +348,122 @@ export default function BulkGeneratePage() {
     setIsPaused(false);
     isPausedRef.current = false;
 
+    // Scheduling index continues from already-completed/scheduled topics
+    // so that resuming after a pause keeps the cadence correct.
+    const alreadyScheduledCount = topics.filter(
+      (t) => t.status === "completed"
+    ).length;
+    let scheduledInRun = 0;
+    let successesInRun = 0;
+    let failuresInRun = 0;
+
     for (const topicItem of pendingTopics) {
       // Check if paused using ref (not state) to get current value
       if (isPausedRef.current) {
         break;
       }
 
-      await generateSingleArticle(topicItem);
+      const scheduleIndex = alreadyScheduledCount + scheduledInRun;
+      const ok = await generateSingleArticle(topicItem, scheduleIndex);
+      if (ok) {
+        successesInRun += 1;
+        if (config.autoSchedule) scheduledInRun += 1;
+      } else {
+        failuresInRun += 1;
+      }
 
       // Small delay between generations to avoid rate limits
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, config.delayMs || 0))
+      );
     }
 
     setIsGenerating(false);
     if (!isPausedRef.current) {
-      toast.success("Bulk generation completed!");
+      if (config.autoSchedule && scheduledInRun > 0) {
+        const firstAt = computeScheduledAt(alreadyScheduledCount);
+        const lastAt = computeScheduledAt(
+          alreadyScheduledCount + scheduledInRun - 1
+        );
+        toast.success(
+          `Done — ${successesInRun} article${
+            successesInRun > 1 ? "s" : ""
+          } generated, ${scheduledInRun} scheduled from ${new Date(
+            firstAt
+          ).toLocaleDateString("fr-FR")} to ${new Date(
+            lastAt
+          ).toLocaleDateString("fr-FR")}.`,
+          { duration: 6000 }
+        );
+      } else {
+        toast.success(
+          `Done — ${successesInRun} generated${
+            failuresInRun ? `, ${failuresInRun} failed` : ""
+          }.`
+        );
+      }
     }
+  };
+
+  const handleGenerateIdeas = async () => {
+    if (!user) return;
+    try {
+      setIsLoadingIdeas(true);
+      setIdeas([]);
+      const idToken = await user.getIdToken();
+      const resp = await fetch("/api/generate/ideas", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          count: ideasCount,
+          aiProvider: config.aiProvider,
+          model: config.model,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data?.error || "Failed to generate ideas");
+      }
+      const list = Array.isArray(data.ideas) ? data.ideas : [];
+      if (list.length === 0) {
+        toast.error("No ideas returned — try again or refine your business context.");
+        return;
+      }
+      setIdeas(list.map((title: string) => ({ title, selected: true })));
+    } catch (err: any) {
+      console.error("Generate ideas error:", err);
+      toast.error(err?.message || "Failed to generate ideas");
+    } finally {
+      setIsLoadingIdeas(false);
+    }
+  };
+
+  const toggleIdea = (index: number) => {
+    setIdeas((prev) =>
+      prev.map((idea, i) =>
+        i === index ? { ...idea, selected: !idea.selected } : idea
+      )
+    );
+  };
+
+  const addSelectedIdeas = () => {
+    const selected = ideas.filter((i) => i.selected);
+    if (selected.length === 0) {
+      toast.error("Select at least one idea");
+      return;
+    }
+    const newItems: BulkTopic[] = selected.map((idea) => ({
+      id: `topic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      topic: idea.title,
+      status: "pending",
+    }));
+    setTopics((prev) => [...prev, ...newItems]);
+    setIsIdeasOpen(false);
+    setIdeas([]);
+    toast.success(`Added ${selected.length} topic${selected.length > 1 ? "s" : ""} to queue.`);
   };
 
   const pauseGeneration = () => {
@@ -374,6 +567,22 @@ export default function BulkGeneratePage() {
             >
               <Plus className="w-5 h-5" />
               Add
+            </motion.button>
+          </div>
+
+          <div className="flex justify-end mt-3">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => {
+                setIsIdeasOpen(true);
+                setIdeas([]);
+              }}
+              disabled={isGenerating}
+              className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg text-sm font-medium hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <Sparkles className="w-4 h-4" />
+              Generate ideas
             </motion.button>
           </div>
 
@@ -510,6 +719,107 @@ export default function BulkGeneratePage() {
                       Use Web Research (Perplexity)
                     </span>
                   </label>
+                </div>
+
+                <div className="col-span-2 md:col-span-4 mt-2 pt-4 border-t border-gray-200">
+                  <label className="flex items-center gap-2 cursor-pointer mb-3">
+                    <input
+                      type="checkbox"
+                      checked={config.autoSchedule}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          autoSchedule: e.target.checked,
+                        })
+                      }
+                      disabled={isGenerating}
+                      className="w-4 h-4 rounded border-gray-300"
+                    />
+                    <Calendar className="w-4 h-4 text-purple-600" />
+                    <span className="text-sm font-medium text-gray-700">
+                      Auto-schedule generated articles
+                    </span>
+                  </label>
+
+                  {config.autoSchedule && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pl-6">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Tous les (jours)
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={365}
+                          value={config.intervalDays}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              intervalDays: Math.max(
+                                1,
+                                parseInt(e.target.value, 10) || 1
+                              ),
+                            })
+                          }
+                          disabled={isGenerating}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Date de début
+                        </label>
+                        <input
+                          type="date"
+                          value={config.startDate}
+                          onChange={(e) =>
+                            setConfig({ ...config, startDate: e.target.value })
+                          }
+                          disabled={isGenerating}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Heure
+                        </label>
+                        <input
+                          type="time"
+                          value={config.publishTime}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              publishTime: e.target.value,
+                            })
+                          }
+                          disabled={isGenerating}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Délai entre générations (ms)
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={500}
+                          value={config.delayMs}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              delayMs: Math.max(
+                                0,
+                                parseInt(e.target.value, 10) || 0
+                              ),
+                            })
+                          }
+                          disabled={isGenerating}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -685,6 +995,146 @@ export default function BulkGeneratePage() {
           </motion.div>
         )}
       </div>
+
+      {/* Generate Ideas Modal */}
+      <AnimatePresence>
+        {isIdeasOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4"
+            onClick={() => !isLoadingIdeas && setIsIdeasOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-purple-600" />
+                  Generate article ideas
+                </h3>
+                <button
+                  onClick={() => !isLoadingIdeas && setIsIdeasOpen(false)}
+                  className="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+                  disabled={isLoadingIdeas}
+                >
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              <div className="px-6 py-4 border-b border-gray-100 flex items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Combien d'idées ?
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={ideasCount}
+                    onChange={(e) =>
+                      setIdeasCount(
+                        Math.min(
+                          30,
+                          Math.max(1, parseInt(e.target.value, 10) || 1)
+                        )
+                      )
+                    }
+                    disabled={isLoadingIdeas}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                  />
+                </div>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleGenerateIdeas}
+                  disabled={isLoadingIdeas}
+                  className="px-5 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-medium hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isLoadingIdeas ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Generate
+                    </>
+                  )}
+                </motion.button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {ideas.length === 0 && !isLoadingIdeas && (
+                  <p className="text-sm text-gray-500 text-center py-8">
+                    Les idées générées s'appuieront sur votre business context
+                    et éviteront vos articles déjà publiés.
+                  </p>
+                )}
+                {isLoadingIdeas && (
+                  <div className="flex flex-col items-center py-8 gap-3 text-gray-500">
+                    <Loader2 className="w-8 h-8 animate-spin text-purple-600" />
+                    <p className="text-sm">Generating ideas...</p>
+                  </div>
+                )}
+                {ideas.length > 0 && (
+                  <ul className="space-y-2">
+                    {ideas.map((idea, i) => (
+                      <li
+                        key={i}
+                        className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer"
+                        onClick={() => toggleIdea(i)}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={idea.selected}
+                          onChange={() => toggleIdea(i)}
+                          className="mt-1 w-4 h-4 rounded border-gray-300"
+                        />
+                        <span className="text-sm text-gray-800">
+                          {idea.title}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {ideas.length > 0 && (
+                <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+                  <p className="text-sm text-gray-500">
+                    {ideas.filter((i) => i.selected).length} / {ideas.length}{" "}
+                    sélectionnée
+                    {ideas.filter((i) => i.selected).length > 1 ? "s" : ""}
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setIsIdeasOpen(false)}
+                      className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
+                    >
+                      Cancel
+                    </button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={addSelectedIdeas}
+                      className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800"
+                    >
+                      Add to queue
+                    </motion.button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

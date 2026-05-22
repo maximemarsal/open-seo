@@ -15,6 +15,7 @@ import { UnsplashService } from "../../../lib/services/unsplash";
 import { config as appConfig } from "../../../lib/config";
 import { verifyIdToken, getTokenFromHeader } from "../../../lib/auth-server";
 import { getUserApiKeysServer } from "../../../lib/services/userKeys.server";
+import { getUserProfileServer } from "../../../lib/services/userProfile.server";
 
 // Helper function to parse and format error messages
 function parseErrorMessage(
@@ -343,6 +344,25 @@ export async function POST(request: NextRequest) {
         };
 
         try {
+          // Load user profile to enrich context with today's date + business context
+          const profile = await getUserProfileServer(userId);
+          const today = new Date().toLocaleDateString("fr-FR", {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          const businessContext = (profile?.businessContext || "").trim();
+          const enrichedContext = [
+            `Today's date: ${today}.`,
+            businessContext
+              ? `Business context (always honor this — the user's company, audience, tone, USP):\n${businessContext}`
+              : "",
+            (extraContext || "").trim(),
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+
           // Initialize services
           const researchService = new ResearchService();
           const effectiveModel = model || openaiModel;
@@ -389,8 +409,8 @@ export async function POST(request: NextRequest) {
               researchDepth
             );
           }
-          // Attach extra context for downstream writer usage
-          (researchData as any).extraContext = extraContext;
+          // Attach enriched context for downstream writer usage
+          (researchData as any).extraContext = enrichedContext;
 
           // Step 2: Generate outline
           sendProgress({
@@ -402,7 +422,7 @@ export async function POST(request: NextRequest) {
           const outline = await outlineService.generateOutline(
             topic,
             researchData,
-            extraContext
+            enrichedContext
           );
 
           // Step 3: Write article

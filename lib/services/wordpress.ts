@@ -82,17 +82,15 @@ export class WordPressService {
       const postId = response.data.id;
       const editUrl = `${this.credentials.url}/wp-admin/post.php?post=${postId}&action=edit`;
 
-      // 2. If successful, update with all other details (meta, slug, taxonomies)
+      // 2. If successful, update with tags only (no categories — WP will use its default category)
       try {
-        const categories = await this.getOrCreateCategories(["IA", "Blog Automatique"]);
         const tags = await this.getOrCreateTags(seoMetadata.keywords);
 
         await this.wordpressApi.post(`/posts/${postId}`, {
-          categories,
           tags,
         });
       } catch (updateError) {
-        console.warn("Created draft but failed to update with full details:", updateError);
+        console.warn("Created draft but failed to update with tags:", updateError);
       }
 
       // 3. Set featured image from first image in content
@@ -424,6 +422,80 @@ export class WordPressService {
         message: `Connection error: ${error.message}`,
       };
     }
+  }
+
+  /**
+   * Fetch ALL post titles (paginated). Used to sync existing topics back from WP.
+   * Decodes basic HTML entities in titles (WP returns rendered HTML).
+   */
+  async fetchAllPostTitles(): Promise<
+    { id: number; title: string; slug: string }[]
+  > {
+    const perPage = 100;
+    const results: { id: number; title: string; slug: string }[] = [];
+
+    const firstResp = await this.wordpressApi.get("/posts", {
+      params: {
+        per_page: perPage,
+        page: 1,
+        status: "publish",
+        _fields: "id,title,slug",
+      },
+    });
+    const totalPages = parseInt(
+      firstResp.headers["x-wp-totalpages"] || "1",
+      10
+    );
+    for (const p of firstResp.data || []) {
+      results.push({
+        id: p.id,
+        title: this.decodeHtmlEntities(p.title?.rendered || ""),
+        slug: p.slug || "",
+      });
+    }
+
+    for (let page = 2; page <= totalPages; page++) {
+      try {
+        const resp = await this.wordpressApi.get("/posts", {
+          params: {
+            per_page: perPage,
+            page,
+            status: "publish",
+            _fields: "id,title,slug",
+          },
+        });
+        for (const p of resp.data || []) {
+          results.push({
+            id: p.id,
+            title: this.decodeHtmlEntities(p.title?.rendered || ""),
+            slug: p.slug || "",
+          });
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch WP titles page ${page}:`, err);
+        break;
+      }
+    }
+
+    return results;
+  }
+
+  private decodeHtmlEntities(s: string): string {
+    return s
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#039;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&hellip;/g, "…")
+      .replace(/&#8217;/g, "’")
+      .replace(/&#8216;/g, "‘")
+      .replace(/&#8220;/g, "“")
+      .replace(/&#8221;/g, "”")
+      .replace(/&#8211;/g, "–")
+      .replace(/&#8212;/g, "—");
   }
 
   async getPostStats(): Promise<{

@@ -2,7 +2,17 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Key, Eye, EyeOff, Globe, Zap, Image, Save } from "lucide-react";
+import {
+  Key,
+  Eye,
+  EyeOff,
+  Globe,
+  Zap,
+  Image,
+  Save,
+  Building2,
+  RefreshCw,
+} from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useRouter } from "next/navigation";
@@ -10,6 +20,10 @@ import {
   saveUserApiKeys,
   getUserApiKeys,
 } from "../../../lib/services/userKeys";
+import {
+  getUserProfile,
+  saveUserProfile,
+} from "../../../lib/services/userProfile";
 import ApiKeyTooltip from "../../../components/ApiKeyTooltip";
 
 interface ApiKeys {
@@ -62,6 +76,17 @@ export default function SettingsPage() {
     wordpressPassword: "",
   });
 
+  // Business context + WordPress sync state
+  const [businessContext, setBusinessContext] = useState("");
+  const [originalBusinessContext, setOriginalBusinessContext] = useState("");
+  const [hasBusinessContextChanges, setHasBusinessContextChanges] =
+    useState(false);
+  const [isSavingContext, setIsSavingContext] = useState(false);
+
+  const [knownTitlesCount, setKnownTitlesCount] = useState(0);
+  const [lastWpSyncAt, setLastWpSyncAt] = useState<string | null>(null);
+  const [isSyncingTitles, setIsSyncingTitles] = useState(false);
+
   // Redirect if not authenticated
   useEffect(() => {
     if (!authLoading && !user) {
@@ -71,12 +96,15 @@ export default function SettingsPage() {
 
   // Load from Firestore on mount
   useEffect(() => {
-    const loadKeys = async () => {
+    const loadAll = async () => {
       if (!user) return;
 
       try {
         setIsLoading(true);
-        const keys = await getUserApiKeys(user.uid);
+        const [keys, profile] = await Promise.all([
+          getUserApiKeys(user.uid),
+          getUserProfile(user.uid),
+        ]);
         if (keys) {
           const loadedKeys = {
             openaiKey: keys.openaiKey || "",
@@ -94,16 +122,27 @@ export default function SettingsPage() {
           setApiKeys(loadedKeys);
           setOriginalKeys(loadedKeys);
         }
+        if (profile) {
+          setBusinessContext(profile.businessContext || "");
+          setOriginalBusinessContext(profile.businessContext || "");
+          setKnownTitlesCount((profile.knownArticleTitles || []).length);
+          setLastWpSyncAt(profile.lastWpSyncAt || null);
+        }
       } catch (error) {
-        console.error("Error loading API keys:", error);
+        console.error("Error loading settings:", error);
         toast.error("Failed to load your settings");
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadKeys();
+    loadAll();
   }, [user]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    setHasBusinessContextChanges(businessContext !== originalBusinessContext);
+  }, [businessContext, originalBusinessContext, isLoading]);
 
   // Detect changes in each section
   useEffect(() => {
@@ -168,10 +207,22 @@ export default function SettingsPage() {
 
       await saveUserApiKeys(user.uid, apiKeys);
       setOriginalKeys(apiKeys);
+      const wpWasChanged = hasWordPressChanges;
       setHasAiChanges(false);
       setHasOtherChanges(false);
       setHasWordPressChanges(false);
       toast.success("Settings saved successfully!");
+
+      // Auto-sync titles on first WP credentials save (knownArticleTitles empty)
+      if (
+        wpWasChanged &&
+        apiKeys.wordpressUrl &&
+        apiKeys.wordpressUsername &&
+        apiKeys.wordpressPassword &&
+        !lastWpSyncAt
+      ) {
+        await handleSyncTitles({ silent: true });
+      }
     } catch (error) {
       console.error("Error saving API keys:", error);
       toast.error("Failed to save settings");
@@ -182,6 +233,67 @@ export default function SettingsPage() {
 
   const toggleShowKey = (key: string) => {
     setShowKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleSaveContext = async () => {
+    if (!user) return;
+    try {
+      setIsSavingContext(true);
+      await saveUserProfile(user.uid, { businessContext });
+      setOriginalBusinessContext(businessContext);
+      setHasBusinessContextChanges(false);
+      toast.success("Business context saved!");
+    } catch (error) {
+      console.error("Error saving business context:", error);
+      toast.error("Failed to save business context");
+    } finally {
+      setIsSavingContext(false);
+    }
+  };
+
+  const handleSyncTitles = async (
+    opts: { silent?: boolean } = {}
+  ): Promise<void> => {
+    if (!user) return;
+    if (
+      !apiKeys.wordpressUrl ||
+      !apiKeys.wordpressUsername ||
+      !apiKeys.wordpressPassword
+    ) {
+      toast.error("Configure your WordPress credentials first.");
+      return;
+    }
+    try {
+      setIsSyncingTitles(true);
+      const idToken = await user.getIdToken();
+      const resp = await fetch("/api/wordpress/sync-titles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        throw new Error(data?.error || "Sync failed");
+      }
+      setKnownTitlesCount(data.count || 0);
+      setLastWpSyncAt(data.lastWpSyncAt || new Date().toISOString());
+      if (!opts.silent) {
+        toast.success(
+          `Synced ${data.count} article titles (${data.wpCount} from WP, ${data.localCount} local).`
+        );
+      } else {
+        toast(`Auto-synced ${data.count} titles from WordPress.`, {
+          icon: "🔄",
+        });
+      }
+    } catch (error: any) {
+      console.error("Sync titles error:", error);
+      toast.error(error?.message || "Failed to sync titles");
+    } finally {
+      setIsSyncingTitles(false);
+    }
   };
 
   if (authLoading || isLoading) {
@@ -231,6 +343,78 @@ export default function SettingsPage() {
             exposed to the browser and are only accessed server-side for API
             calls. Only you can access your keys.
           </p>
+        </motion.div>
+
+        {/* Business Context Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="bg-white rounded-3xl shadow-xl p-8 mb-8"
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+            <Building2 className="w-6 h-6 text-blue-600" />
+            Business Context
+          </h2>
+          <p className="text-gray-600 text-sm mb-6">
+            Décrivez votre entreprise. Ce contexte est automatiquement injecté
+            dans chaque génération d'article et chaque génération d'idées de
+            titres.
+          </p>
+
+          <textarea
+            value={businessContext}
+            onChange={(e) => setBusinessContext(e.target.value)}
+            placeholder="Ex : Nom : Acme Running. Secteur : équipement sportif. Audience : coureurs amateurs et marathoniens. Ton : enthousiaste, expert, accessible. USP : conseils basés sur la science et testés en conditions réelles..."
+            rows={8}
+            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900 placeholder-gray-400 resize-y"
+          />
+          <p className="text-xs text-gray-500 mt-2">
+            {businessContext.length} caractères
+          </p>
+
+          <AnimatePresence>
+            {hasBusinessContextChanges && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mt-6 flex justify-end"
+              >
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleSaveContext}
+                  disabled={isSavingContext}
+                  className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 ${
+                    isSavingContext
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-gray-900 to-gray-700 text-white"
+                  }`}
+                >
+                  {isSavingContext ? (
+                    <>
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                        className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                      />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-5 h-5" />
+                      Save
+                    </>
+                  )}
+                </motion.button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
 
         {/* AI Services Section */}
@@ -754,6 +938,68 @@ export default function SettingsPage() {
                 Create an application password in WordPress: Users → Your
                 Profile → Application Passwords
               </p>
+            </div>
+          </div>
+
+          {/* Sync existing articles from WordPress */}
+          <div className="mt-8 pt-6 border-t border-gray-200">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-1">
+                  Sync existing articles
+                </h3>
+                <p className="text-sm text-gray-600">
+                  Importe les titres déjà publiés sur WordPress pour éviter les
+                  doublons lors de la génération d'idées.
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {knownTitlesCount > 0 ? (
+                    <>
+                      {knownTitlesCount} titre
+                      {knownTitlesCount > 1 ? "s" : ""} synchronisé
+                      {knownTitlesCount > 1 ? "s" : ""}
+                      {lastWpSyncAt
+                        ? ` · dernière sync : ${new Date(
+                            lastWpSyncAt
+                          ).toLocaleString("fr-FR")}`
+                        : ""}
+                    </>
+                  ) : (
+                    "Aucune synchronisation pour le moment."
+                  )}
+                </p>
+              </div>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => handleSyncTitles()}
+                disabled={
+                  isSyncingTitles ||
+                  !apiKeys.wordpressUrl ||
+                  !apiKeys.wordpressUsername ||
+                  !apiKeys.wordpressPassword
+                }
+                className={`px-5 py-2.5 rounded-xl font-medium flex items-center gap-2 transition-all ${
+                  isSyncingTitles ||
+                  !apiKeys.wordpressUrl ||
+                  !apiKeys.wordpressUsername ||
+                  !apiKeys.wordpressPassword
+                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                    : "bg-blue-600 text-white hover:bg-blue-700 shadow-md"
+                }`}
+              >
+                <motion.div
+                  animate={isSyncingTitles ? { rotate: 360 } : { rotate: 0 }}
+                  transition={
+                    isSyncingTitles
+                      ? { duration: 1, repeat: Infinity, ease: "linear" }
+                      : { duration: 0 }
+                  }
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </motion.div>
+                {isSyncingTitles ? "Syncing..." : "Sync from WordPress"}
+              </motion.button>
             </div>
           </div>
 
