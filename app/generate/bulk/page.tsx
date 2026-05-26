@@ -18,11 +18,28 @@ import {
   Sparkles,
   Calendar,
   X,
+  Target,
+  Edit2,
+  Globe,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { getUserApiKeys } from "../../../lib/services/userKeys";
+import { CTA } from "../../../types/blog";
+import CTAModal from "../../../components/CTAModal";
+
+// GPT-5.5 and above use a different effort scale (no "minimal", adds "xhigh")
+function isGpt55Plus(model: string): boolean {
+  const m = (model || "").toLowerCase();
+  const match = m.match(/^gpt-(\d+)(?:\.(\d+))?/);
+  if (!match) return false;
+  const major = parseInt(match[1], 10);
+  const minor = match[2] ? parseInt(match[2], 10) : 0;
+  if (major > 5) return true;
+  if (major === 5 && minor >= 5) return true;
+  return false;
+}
 
 interface BulkTopic {
   id: string;
@@ -40,6 +57,10 @@ interface GenerationConfig {
   useResearch: boolean;
   researchDepth: "shallow" | "moderate" | "deep";
   numberOfImages: number;
+  publishToWordPress: boolean;
+  extraContext: string;
+  gpt5ReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
+  gpt5Verbosity: "low" | "medium" | "high";
   autoSchedule: boolean;
   intervalDays: number;
   startDate: string; // YYYY-MM-DD
@@ -70,12 +91,21 @@ export default function BulkGeneratePage() {
     useResearch: true,
     researchDepth: "moderate",
     numberOfImages: 0,
+    publishToWordPress: false,
+    extraContext: "",
+    gpt5ReasoningEffort: "medium",
+    gpt5Verbosity: "medium",
     autoSchedule: false,
     intervalDays: 3,
     startDate: todayYmd(),
     publishTime: "09:00",
     delayMs: 2000,
   });
+
+  // CTAs (applied to every article in the batch)
+  const [ctas, setCtas] = useState<CTA[]>([]);
+  const [showCTAModal, setShowCTAModal] = useState(false);
+  const [editingCTA, setEditingCTA] = useState<CTA | undefined>(undefined);
 
   // Generate-ideas modal state
   const [isIdeasOpen, setIsIdeasOpen] = useState(false);
@@ -84,6 +114,29 @@ export default function BulkGeneratePage() {
   const [ideas, setIdeas] = useState<{ title: string; selected: boolean }[]>(
     []
   );
+
+  const handleAddCTA = () => {
+    setEditingCTA(undefined);
+    setShowCTAModal(true);
+  };
+  const handleEditCTA = (cta: CTA) => {
+    setEditingCTA(cta);
+    setShowCTAModal(true);
+  };
+  const handleDeleteCTA = (id: string) => {
+    setCtas((prev) => prev.filter((c) => c.id !== id));
+  };
+  const handleSaveCTA = (cta: CTA) => {
+    setCtas((prev) => {
+      const existing = prev.find((c) => c.id === cta.id);
+      if (existing) {
+        return prev.map((c) => (c.id === cta.id ? cta : c));
+      }
+      return [...prev, cta];
+    });
+    setShowCTAModal(false);
+    setEditingCTA(undefined);
+  };
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -195,13 +248,21 @@ export default function BulkGeneratePage() {
         },
         body: JSON.stringify({
           topic: topicItem.topic,
-          publishToWordPress: false,
+          publishToWordPress: config.publishToWordPress,
           researchDepth: config.researchDepth,
           numberOfImages: config.numberOfImages,
           aiProvider: config.aiProvider,
           model: config.model,
           useResearch: config.useResearch,
-          ctas: [],
+          extraContext: config.extraContext,
+          ctas,
+          ...(config.aiProvider === "openai" &&
+          config.model.toLowerCase().startsWith("gpt-5")
+            ? {
+                gpt5ReasoningEffort: config.gpt5ReasoningEffort,
+                gpt5Verbosity: config.gpt5Verbosity,
+              }
+            : {}),
         }),
       });
 
@@ -330,6 +391,26 @@ export default function BulkGeneratePage() {
       }
       if (!userKeys?.unsplashKey && config.numberOfImages > 0) {
         missing.push("Unsplash API Key");
+      }
+      if (
+        config.publishToWordPress &&
+        (!userKeys?.wordpressUrl ||
+          !userKeys?.wordpressUsername ||
+          !userKeys?.wordpressPassword)
+      ) {
+        missing.push("WordPress credentials");
+      }
+      if (
+        config.aiProvider === "deepseek" &&
+        !userKeys?.deepseekKey
+      ) {
+        missing.push("DeepSeek API Key");
+      }
+      if (config.aiProvider === "qwen" && !userKeys?.qwenKey) {
+        missing.push("Qwen API Key");
+      }
+      if (config.aiProvider === "grok" && !userKeys?.grokKey) {
+        missing.push("Grok API Key");
       }
 
       if (missing.length > 0) {
@@ -632,27 +713,59 @@ export default function BulkGeneratePage() {
                   </label>
                   <select
                     value={config.model}
-                    onChange={(e) => setConfig({ ...config, model: e.target.value })}
+                    onChange={(e) =>
+                      setConfig({ ...config, model: e.target.value })
+                    }
                     disabled={isGenerating}
                     className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
                   >
                     {config.aiProvider === "openai" && (
                       <>
-                        <option value="gpt-4o-mini">GPT-4o Mini</option>
-                        <option value="gpt-4o">GPT-4o</option>
-                        <option value="gpt-4.1">GPT-4.1</option>
+                        <optgroup label="GPT-5.5 (latest)">
+                          <option value="gpt-5.5">GPT-5.5</option>
+                          <option value="gpt-5.5-pro">GPT-5.5 Pro</option>
+                        </optgroup>
+                        <optgroup label="GPT-5.4">
+                          <option value="gpt-5.4">GPT-5.4</option>
+                          <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                          <option value="gpt-5.4-nano">GPT-5.4 Nano</option>
+                          <option value="gpt-5.4-pro">GPT-5.4 Pro</option>
+                        </optgroup>
+                        <optgroup label="GPT-5.2 / 5.1">
+                          <option value="gpt-5.2">GPT-5.2</option>
+                          <option value="gpt-5.2-pro">GPT-5.2 Pro</option>
+                          <option value="gpt-5.1">GPT-5.1</option>
+                        </optgroup>
+                        <optgroup label="GPT-5">
+                          <option value="gpt-5">GPT-5</option>
+                          <option value="gpt-5-mini">GPT-5 Mini</option>
+                          <option value="gpt-5-nano">GPT-5 Nano</option>
+                          <option value="gpt-5-pro">GPT-5 Pro</option>
+                        </optgroup>
+                        <optgroup label="GPT-4">
+                          <option value="gpt-4.1">GPT-4.1</option>
+                          <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                          <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+                          <option value="gpt-4o">GPT-4o</option>
+                          <option value="gpt-4o-mini">GPT-4o Mini</option>
+                        </optgroup>
                       </>
                     )}
                     {config.aiProvider === "anthropic" && (
                       <>
-                        <option value="claude-sonnet">Claude Sonnet</option>
                         <option value="claude-opus-4">Claude Opus 4</option>
+                        <option value="claude-sonnet-4.5">
+                          Claude Sonnet 4.5
+                        </option>
+                        <option value="claude-sonnet">Claude Sonnet</option>
                       </>
                     )}
                     {config.aiProvider === "gemini" && (
                       <>
-                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                         <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="gemini-2.5-flash">
+                          Gemini 2.5 Flash
+                        </option>
                       </>
                     )}
                     {config.aiProvider === "deepseek" && (
@@ -687,24 +800,26 @@ export default function BulkGeneratePage() {
 
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">
-                    Images
+                    Images : {config.numberOfImages}
                   </label>
-                  <select
+                  <input
+                    type="range"
+                    min={0}
+                    max={5}
+                    step={1}
                     value={config.numberOfImages}
                     onChange={(e) =>
-                      setConfig({ ...config, numberOfImages: parseInt(e.target.value) })
+                      setConfig({
+                        ...config,
+                        numberOfImages: parseInt(e.target.value),
+                      })
                     }
                     disabled={isGenerating}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
-                  >
-                    <option value={0}>None</option>
-                    <option value={1}>1 image</option>
-                    <option value={2}>2 images</option>
-                    <option value={3}>3 images</option>
-                  </select>
+                    className="w-full h-2 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-900 mt-3"
+                  />
                 </div>
 
-                <div className="col-span-2 md:col-span-4">
+                <div className="col-span-2 md:col-span-4 flex flex-wrap gap-x-6 gap-y-2">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -719,6 +834,100 @@ export default function BulkGeneratePage() {
                       Use Web Research (Perplexity)
                     </span>
                   </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.publishToWordPress}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          publishToWordPress: e.target.checked,
+                        })
+                      }
+                      disabled={isGenerating}
+                      className="w-4 h-4 rounded border-gray-300"
+                    />
+                    <Globe className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm text-gray-700">
+                      Publish to WordPress
+                    </span>
+                  </label>
+                </div>
+
+                {/* GPT-5 reasoning / verbosity */}
+                {config.aiProvider === "openai" &&
+                  config.model.toLowerCase().startsWith("gpt-5") && (
+                    <div className="col-span-2 md:col-span-4 grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 border-t border-gray-200">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Reasoning Effort
+                        </label>
+                        <select
+                          value={config.gpt5ReasoningEffort}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              gpt5ReasoningEffort: e.target.value as any,
+                            })
+                          }
+                          disabled={isGenerating}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                        >
+                          {isGpt55Plus(config.model) ? (
+                            <>
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                              <option value="xhigh">Extra High</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="minimal">Minimal</option>
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          Verbosity
+                        </label>
+                        <select
+                          value={config.gpt5Verbosity}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              gpt5Verbosity: e.target.value as any,
+                            })
+                          }
+                          disabled={isGenerating}
+                          className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm"
+                        >
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                {/* Extra context (per-batch, in addition to global business context) */}
+                <div className="col-span-2 md:col-span-4">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    Extra context for this batch (optional)
+                  </label>
+                  <textarea
+                    value={config.extraContext}
+                    onChange={(e) =>
+                      setConfig({ ...config, extraContext: e.target.value })
+                    }
+                    rows={3}
+                    placeholder="Instructions ou contraintes additionnelles appliquées à tous les articles de ce batch (ex: 'angle pratique, format guide, public débutant')"
+                    disabled={isGenerating}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm resize-y"
+                  />
                 </div>
 
                 <div className="col-span-2 md:col-span-4 mt-2 pt-4 border-t border-gray-200">
@@ -824,6 +1033,91 @@ export default function BulkGeneratePage() {
               </motion.div>
             )}
           </AnimatePresence>
+        </motion.div>
+
+        {/* CTAs Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="bg-white rounded-2xl border border-gray-200 shadow-lg p-6 mb-6"
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Target className="w-5 h-5 text-gray-700" />
+              <span className="text-sm font-medium text-gray-700">
+                Call-to-Actions (applied to every article in this batch)
+              </span>
+            </div>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={handleAddCTA}
+              disabled={isGenerating}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors disabled:bg-gray-200 disabled:text-gray-400"
+            >
+              <Plus className="w-4 h-4" />
+              Add CTA
+            </motion.button>
+          </div>
+
+          {ctas.length === 0 ? (
+            <p className="text-xs text-gray-500">
+              No CTAs configured. Add one to promote your product or offer.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {ctas.map((cta) => (
+                <motion.div
+                  key={cta.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="bg-gray-50 border border-gray-200 rounded-xl p-3 flex items-center gap-3"
+                >
+                  {cta.imageUrl && (
+                    <img
+                      src={cta.imageUrl}
+                      alt={cta.title || "CTA"}
+                      className="w-12 h-12 object-cover rounded-lg flex-shrink-0"
+                    />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <h4 className="font-semibold text-gray-900 text-sm truncate">
+                      {cta.title || "Untitled CTA"}
+                    </h4>
+                    <p className="text-xs text-gray-500 truncate">
+                      {cta.positionType === "after-intro" &&
+                        "After Introduction"}
+                      {cta.positionType === "after-section" &&
+                        `After Section ${cta.sectionNumber || 1}`}
+                      {cta.positionType === "middle" && "Middle of Article"}
+                      {cta.positionType === "before-conclusion" &&
+                        "Before Conclusion"}
+                      {cta.positionType === "end" && "End of Article"}
+                      {cta.positionType === "random" &&
+                        `Random (${cta.randomCount || 1}×)`}{" "}
+                      · {cta.style} style
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleEditCTA(cta)}
+                    disabled={isGenerating}
+                    className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
+                  >
+                    <Edit2 className="w-4 h-4 text-gray-600" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteCTA(cta.id)}
+                    disabled={isGenerating}
+                    className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-500" />
+                  </button>
+                </motion.div>
+              ))}
+            </div>
+          )}
         </motion.div>
 
         {/* Topics List */}
@@ -995,6 +1289,21 @@ export default function BulkGeneratePage() {
           </motion.div>
         )}
       </div>
+
+      {/* CTA Modal */}
+      {user && (
+        <CTAModal
+          isOpen={showCTAModal}
+          onClose={() => {
+            setShowCTAModal(false);
+            setEditingCTA(undefined);
+          }}
+          onSave={handleSaveCTA}
+          existingCTA={editingCTA}
+          maxPosition={6}
+          userId={user.uid}
+        />
+      )}
 
       {/* Generate Ideas Modal */}
       <AnimatePresence>

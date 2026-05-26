@@ -11,8 +11,16 @@ type GenerateOptions = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
-  reasoningEffort?: "minimal" | "faible" | "moyen" | "élevé";
-  verbosity?: "faible" | "moyenne" | "élevée";
+  reasoningEffort?:
+    | "minimal"
+    | "faible"
+    | "moyen"
+    | "élevé"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh";
+  verbosity?: "faible" | "moyenne" | "élevée" | "low" | "medium" | "high";
   provider?: "openai" | "anthropic" | "gemini" | "deepseek" | "qwen" | "grok";
 };
 
@@ -43,12 +51,33 @@ export class AITextGenerator {
     return undefined;
   }
 
+  /**
+   * Returns true for GPT-5.5 and above (or GPT-6+) — these models do NOT
+   * support `minimal` effort but DO support `xhigh`.
+   */
+  private isGpt55Plus(model: string | undefined): boolean {
+    if (!model) return false;
+    const m = model.toLowerCase();
+    // GPT-5.5+, GPT-6+, etc.
+    const match = m.match(/^gpt-(\d+)(?:\.(\d+))?/);
+    if (!match) return false;
+    const major = parseInt(match[1], 10);
+    const minor = match[2] ? parseInt(match[2], 10) : 0;
+    if (major > 5) return true;
+    if (major === 5 && minor >= 5) return true;
+    return false;
+  }
+
   private mapEffort(
-    value?: string
-  ): "minimal" | "low" | "medium" | "high" | undefined {
+    value?: string,
+    model?: string
+  ): "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
     if (!value) return undefined;
     const v = value.toLowerCase();
-    if (v === "minimal") return "minimal";
+    const supportsXhigh = this.isGpt55Plus(model);
+
+    if (v === "xhigh") return supportsXhigh ? "xhigh" : "high";
+    if (v === "minimal") return supportsXhigh ? "low" : "minimal";
     if (v === "faible" || v === "low") return "low";
     if (v === "moyen" || v === "medium") return "medium";
     if (v === "élevé" || v === "eleve" || v === "high") return "high";
@@ -100,16 +129,14 @@ export class AITextGenerator {
       // (GPT-5 can use up to 80-90% of tokens for reasoning alone)
       const gpt5MaxTokens = maxTokens ? maxTokens * 10 : 16000;
 
+      const effort = this.mapEffort(reasoningEffort, model);
+      const verb = this.mapVerbosity(verbosity);
       const response = await anyClient.responses.create({
         model,
         input,
         max_output_tokens: gpt5MaxTokens,
-        ...(this.mapEffort(reasoningEffort)
-          ? { reasoning: { effort: this.mapEffort(reasoningEffort) } }
-          : {}),
-        ...(this.mapVerbosity(verbosity)
-          ? { text: { verbosity: this.mapVerbosity(verbosity) } }
-          : {}),
+        ...(effort ? { reasoning: { effort } } : {}),
+        ...(verb ? { text: { verbosity: verb } } : {}),
       });
 
       // Usage accounting (best effort depending on provider payload)

@@ -32,6 +32,18 @@ import { getUserApiKeys } from "../../lib/services/userKeys";
 
 const LAST_CONFIG_KEY = "lastGenerationConfig";
 
+// GPT-5.5 and above use a different effort scale (no "minimal", adds "xhigh")
+function isGpt55Plus(model: string): boolean {
+  const m = (model || "").toLowerCase();
+  const match = m.match(/^gpt-(\d+)(?:\.(\d+))?/);
+  if (!match) return false;
+  const major = parseInt(match[1], 10);
+  const minor = match[2] ? parseInt(match[2], 10) : 0;
+  if (major > 5) return true;
+  if (major === 5 && minor >= 5) return true;
+  return false;
+}
+
 export default function GeneratePage() {
   const { user, loading: authLoading, logout } = useAuth();
   const router = useRouter();
@@ -56,7 +68,7 @@ export default function GeneratePage() {
   const [qwenModel, setQwenModel] = useState<string>("qwen-qwq-32b-preview");
   const [grokModel, setGrokModel] = useState<string>("grok-4");
   const [gpt5ReasoningEffort, setGpt5ReasoningEffort] = useState<
-    "minimal" | "low" | "medium" | "high"
+    "minimal" | "low" | "medium" | "high" | "xhigh"
   >("medium");
   const [gpt5Verbosity, setGpt5Verbosity] = useState<"low" | "medium" | "high">(
     "medium"
@@ -790,12 +802,34 @@ export default function GeneratePage() {
                     disabled={isGenerating}
                     className="w-full px-6 py-4 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-gray-400/50 text-gray-900 appearance-none cursor-pointer transition-all"
                   >
-                    <option value="gpt-4o-mini">GPT-4o Mini</option>
-                    <option value="gpt-4o">GPT-4o</option>
-                    <option value="gpt-4.1">GPT-4.1</option>
-                    <option value="gpt-5">GPT-5</option>
-                    <option value="gpt-5-mini">GPT-5 Mini</option>
-                    <option value="gpt-5-nano">GPT-5 Nano</option>
+                    <optgroup label="GPT-5.5 (latest)">
+                      <option value="gpt-5.5">GPT-5.5</option>
+                      <option value="gpt-5.5-pro">GPT-5.5 Pro</option>
+                    </optgroup>
+                    <optgroup label="GPT-5.4">
+                      <option value="gpt-5.4">GPT-5.4</option>
+                      <option value="gpt-5.4-mini">GPT-5.4 Mini</option>
+                      <option value="gpt-5.4-nano">GPT-5.4 Nano</option>
+                      <option value="gpt-5.4-pro">GPT-5.4 Pro</option>
+                    </optgroup>
+                    <optgroup label="GPT-5.2 / 5.1">
+                      <option value="gpt-5.2">GPT-5.2</option>
+                      <option value="gpt-5.2-pro">GPT-5.2 Pro</option>
+                      <option value="gpt-5.1">GPT-5.1</option>
+                    </optgroup>
+                    <optgroup label="GPT-5">
+                      <option value="gpt-5">GPT-5</option>
+                      <option value="gpt-5-mini">GPT-5 Mini</option>
+                      <option value="gpt-5-nano">GPT-5 Nano</option>
+                      <option value="gpt-5-pro">GPT-5 Pro</option>
+                    </optgroup>
+                    <optgroup label="GPT-4">
+                      <option value="gpt-4.1">GPT-4.1</option>
+                      <option value="gpt-4.1-mini">GPT-4.1 Mini</option>
+                      <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+                      <option value="gpt-4o">GPT-4o</option>
+                      <option value="gpt-4o-mini">GPT-4o Mini</option>
+                    </optgroup>
                   </select>
                 </motion.div>
               )}
@@ -935,10 +969,21 @@ export default function GeneratePage() {
                       disabled={isGenerating}
                       className="w-full px-6 py-4 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-gray-400/50 text-gray-900 appearance-none cursor-pointer transition-all"
                     >
-                      <option value="minimal">Minimal</option>
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
+                      {isGpt55Plus(openaiModel) ? (
+                        <>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="xhigh">Extra High</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="minimal">Minimal</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </>
+                      )}
                     </select>
                   </div>
                   <div>
