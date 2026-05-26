@@ -76,6 +76,40 @@ const todayYmd = () => {
   return `${y}-${m}-${dd}`;
 };
 
+// Network-resilient helpers
+const isNetworkError = (err: any): boolean => {
+  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
+  const msg = (err?.message || String(err || "")).toLowerCase();
+  return (
+    msg.includes("failed to fetch") ||
+    msg.includes("network error") ||
+    msg.includes("network request failed") ||
+    msg.includes("load failed") ||
+    msg.includes("err_internet_disconnected") ||
+    msg.includes("err_network") ||
+    msg.includes("the network connection was lost") ||
+    msg.includes("connection reset") ||
+    msg.includes("connection refused") ||
+    err?.name === "TypeError" // fetch throws TypeError on network failure
+  );
+};
+
+const waitForOnline = (): Promise<void> => {
+  if (typeof window === "undefined" || navigator.onLine) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const handler = () => {
+      window.removeEventListener("online", handler);
+      resolve();
+    };
+    window.addEventListener("online", handler);
+  });
+};
+
+const MAX_NETWORK_RETRIES = 3;
+const RETRY_DELAYS_MS = [3000, 10000, 30000];
+
 export default function BulkGeneratePage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -106,6 +140,33 @@ export default function BulkGeneratePage() {
   const [ctas, setCtas] = useState<CTA[]>([]);
   const [showCTAModal, setShowCTAModal] = useState(false);
   const [editingCTA, setEditingCTA] = useState<CTA | undefined>(undefined);
+
+  // Online/offline tracking
+  const [isOnline, setIsOnline] = useState(
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      toast.success("Network restored — bulk will continue if running.", {
+        icon: "🟢",
+      });
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+      toast.error("Offline — bulk paused, will resume automatically.", {
+        icon: "🔴",
+        duration: 5000,
+      });
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   // Generate-ideas modal state
   const [isIdeasOpen, setIsIdeasOpen] = useState(false);
@@ -228,19 +289,37 @@ export default function BulkGeneratePage() {
     topicItem: BulkTopic,
     scheduleIndex: number
   ): Promise<boolean> => {
-    updateTopicStatus(topicItem.id, {
-      status: "generating",
-      progress: 0,
-      message: "Starting...",
-    });
+    let attempt = 0;
 
-    try {
-      const idToken = await user?.getIdToken();
-      if (!idToken) {
-        throw new Error("Authentication failed");
+    // Retry loop — handles transient network errors with exponential backoff
+    // and waits for the connection to come back if offline.
+    while (true) {
+      // Block until online
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        updateTopicStatus(topicItem.id, {
+          status: "generating",
+          progress: 0,
+          message: "Offline — waiting for network...",
+        });
+        await waitForOnline();
       }
 
-      const response = await fetch("/api/generate", {
+      updateTopicStatus(topicItem.id, {
+        status: "generating",
+        progress: 0,
+        message:
+          attempt === 0
+            ? "Starting..."
+            : `Retry ${attempt}/${MAX_NETWORK_RETRIES}...`,
+      });
+
+      try {
+        const idToken = await user?.getIdToken();
+        if (!idToken) {
+          throw new Error("Authentication failed");
+        }
+
+        const response = await fetch("/api/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -361,13 +440,30 @@ export default function BulkGeneratePage() {
       });
 
       return true;
-    } catch (error: any) {
-      updateTopicStatus(topicItem.id, {
-        status: "failed",
-        error: error.message || "Unknown error",
-        message: error.message,
-      });
-      return false;
+      } catch (error: any) {
+        const isNet = isNetworkError(error);
+        if (isNet && attempt < MAX_NETWORK_RETRIES) {
+          attempt += 1;
+          const delay = RETRY_DELAYS_MS[attempt - 1] || 30000;
+          updateTopicStatus(topicItem.id, {
+            status: "generating",
+            message: `Network error — retry ${attempt}/${MAX_NETWORK_RETRIES} in ${Math.round(
+              delay / 1000
+            )}s...`,
+          });
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        // Non-network error or retries exhausted — mark as failed
+        updateTopicStatus(topicItem.id, {
+          status: "failed",
+          error: error.message || "Unknown error",
+          message: isNet
+            ? `Network error after ${MAX_NETWORK_RETRIES} retries`
+            : error.message,
+        });
+        return false;
+      }
     }
   };
 
@@ -547,6 +643,17 @@ export default function BulkGeneratePage() {
     toast.success(`Added ${selected.length} topic${selected.length > 1 ? "s" : ""} to queue.`);
   };
 
+  const retryAllFailed = () => {
+    setTopics((prev) =>
+      prev.map((t) =>
+        t.status === "failed"
+          ? { ...t, status: "pending", progress: undefined, error: undefined, message: undefined }
+          : t
+      )
+    );
+    toast.success("Failed topics reset to pending. Click Generate All to retry.");
+  };
+
   const pauseGeneration = () => {
     setIsPaused(true);
     isPausedRef.current = true;
@@ -595,6 +702,24 @@ export default function BulkGeneratePage() {
             Add multiple topics and generate them all at once
           </p>
         </motion.div>
+
+        {/* Offline banner */}
+        <AnimatePresence>
+          {!isOnline && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm flex items-center gap-2"
+            >
+              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span>
+                <strong>Hors-ligne.</strong> Le bulk attendra automatiquement
+                que la connexion revienne avant de continuer.
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Stats */}
         {topics.length > 0 && (
@@ -1273,6 +1398,18 @@ export default function BulkGeneratePage() {
                     Pause
                   </>
                 )}
+              </motion.button>
+            )}
+
+            {failedCount > 0 && !isGenerating && (
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={retryAllFailed}
+                className="px-6 py-4 bg-orange-500 text-white rounded-2xl font-semibold hover:bg-orange-600 transition-colors flex items-center gap-2"
+              >
+                <RotateCcw className="w-5 h-5" />
+                Retry all failed ({failedCount})
               </motion.button>
             )}
 
