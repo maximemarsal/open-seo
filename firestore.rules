@@ -17,13 +17,39 @@ service cloud.firestore {
       // Public user data (if needed in the future)
       allow read: if isOwner(userId);
       allow write: if isOwner(userId);
-      
+
       // Private subcollection - ONLY the owner can access
       match /private/{document=**} {
         // Only the user can read/write their own API keys
         allow read: if isOwner(userId);
         allow write: if isOwner(userId);
       }
+
+      // Settings doc (activeSiteId, etc.)
+      match /settings/{document=**} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Sites collection + everything inside (articles, private wpCredentials,
+      // profile, ctaTemplates) — owner-only.
+      match /sites/{siteId} {
+        allow read, write: if isOwner(userId);
+
+        match /{document=**} {
+          allow read, write: if isOwner(userId);
+        }
+      }
+    }
+
+    // Global scheduledArticles index used by the cron — only the user that
+    // owns the entry can read/write it. The doc shape is
+    // { userId, siteId, articleId, scheduledAt }.
+    match /scheduledArticles/{docId} {
+      allow read, write: if isAuthenticated()
+        && request.auth.uid == resource.data.userId;
+      // Allow create when the doc being created references the caller.
+      allow create: if isAuthenticated()
+        && request.auth.uid == request.resource.data.userId;
     }
     
     // Deny all other access by default

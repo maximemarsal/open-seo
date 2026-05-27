@@ -44,7 +44,7 @@ const isPastDate = (date: Date, hour?: number) => {
 
 function CalendarPageContent() {
   const { user, loading: authLoading } = useAuth();
-  const { activeSiteId } = useSite();
+  const { activeSiteId, isLoading: sitesLoading } = useSite();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [articles, setArticles] = useState<SavedArticle[]>([]);
@@ -65,11 +65,16 @@ function CalendarPageContent() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (user && activeSiteId) {
-      fetchArticles();
+    if (!user) return;
+    if (sitesLoading) return;
+    if (!activeSiteId) {
+      setArticles([]);
+      setIsLoading(false);
+      return;
     }
+    fetchArticles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, activeSiteId]);
+  }, [user, activeSiteId, sitesLoading]);
 
   useEffect(() => {
     const articleId = searchParams.get("articleId");

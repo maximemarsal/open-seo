@@ -26,7 +26,7 @@ type StatusFilter = "all" | "draft" | "scheduled" | "published";
 
 export default function ArticlesPage() {
   const { user, loading: authLoading } = useAuth();
-  const { activeSiteId, activeSite } = useSite();
+  const { activeSiteId, activeSite, isLoading: sitesLoading } = useSite();
   const router = useRouter();
   const [articles, setArticles] = useState<SavedArticle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,11 +42,18 @@ export default function ArticlesPage() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (user && activeSiteId) {
-      fetchArticles();
+    if (!user) return;
+    if (sitesLoading) return; // wait for SiteContext to resolve
+    if (!activeSiteId) {
+      // SiteContext finished but the user has no site (edge case).
+      // Stop spinning so the empty state can render.
+      setArticles([]);
+      setIsLoading(false);
+      return;
     }
+    fetchArticles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, activeSiteId]);
+  }, [user, activeSiteId, sitesLoading]);
 
   const fetchArticles = async () => {
     if (!activeSiteId) return;

@@ -9,15 +9,7 @@ import React, {
   useState,
 } from "react";
 import { useAuth } from "./AuthContext";
-import {
-  Site,
-  createSite,
-  getActiveSiteId,
-  listSites,
-  setActiveSiteId,
-  renameSite,
-  deleteSite as deleteSiteService,
-} from "../lib/services/sites";
+import { Site } from "../lib/services/sites";
 
 interface SiteContextValue {
   sites: Site[];
@@ -47,16 +39,28 @@ const SiteContext = createContext<SiteContextValue>({
   refresh: async () => {},
 });
 
+async function authedFetch(
+  user: { getIdToken: () => Promise<string> },
+  url: string,
+  init?: RequestInit
+): Promise<Response> {
+  const idToken = await user.getIdToken();
+  const headers = new Headers(init?.headers || {});
+  headers.set("Authorization", `Bearer ${idToken}`);
+  if (!headers.has("Content-Type") && init?.body) {
+    headers.set("Content-Type", "application/json");
+  }
+  return fetch(url, { ...init, headers });
+}
+
 export function SiteProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [sites, setSites] = useState<Site[]>([]);
   const [activeSiteId, setActiveSiteIdState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const userId = user?.uid;
-
   const load = useCallback(async () => {
-    if (!userId) {
+    if (!user) {
       setSites([]);
       setActiveSiteIdState(null);
       setIsLoading(false);
@@ -64,90 +68,104 @@ export function SiteProvider({ children }: { children: React.ReactNode }) {
     }
     setIsLoading(true);
     try {
-      // Ping the API once to trigger ensureUserMigrated server-side. We
-      // don't need the response — only the side effect that creates a
-      // Default site for legacy users.
-      try {
-        const idToken = await user!.getIdToken();
-        await fetch("/api/sites", {
-          headers: { Authorization: `Bearer ${idToken}` },
-        });
-      } catch {
-        // If migration ping fails, we still try to read client-side; the
-        // user just won't see the migrated data until the next refresh.
-      }
-
-      const [list, active] = await Promise.all([
-        listSites(userId),
-        getActiveSiteId(userId),
-      ]);
-      setSites(list);
-      if (active && list.find((s) => s.id === active)) {
-        setActiveSiteIdState(active);
-      } else if (list.length > 0) {
-        setActiveSiteIdState(list[0].id);
-      } else {
-        setActiveSiteIdState(null);
-      }
+      // /api/sites runs ensureUserMigrated server-side, so on first call it
+      // creates the Default site from any legacy data. It then returns the
+      // list of sites + the activeSiteId. Going through the API means we
+      // bypass any client-side Firestore rules issues.
+      const resp = await authedFetch(user, "/api/sites");
+      if (!resp.ok) throw new Error(`GET /api/sites returned ${resp.status}`);
+      const data = (await resp.json()) as {
+        sites: Site[];
+        activeSiteId: string | null;
+      };
+      setSites(data.sites || []);
+      setActiveSiteIdState(data.activeSiteId || null);
     } catch (err) {
       console.error("SiteContext load failed:", err);
+      setSites([]);
+      setActiveSiteIdState(null);
     } finally {
       setIsLoading(false);
     }
-  }, [userId, user]);
+  }, [user]);
 
   useEffect(() => {
+    // Wait until firebase auth is done resolving before we try to load.
+    if (authLoading) return;
     load();
-  }, [load]);
+  }, [load, authLoading]);
 
   const switchSite = useCallback(
     async (siteId: string) => {
-      if (!userId) return;
+      if (!user) return;
       setActiveSiteIdState(siteId);
       try {
-        await setActiveSiteId(userId, siteId);
+        await authedFetch(user, `/api/sites/${siteId}/activate`, {
+          method: "POST",
+        });
       } catch (err) {
         console.warn("Failed to persist active site:", err);
       }
     },
-    [userId]
+    [user]
   );
 
   const createNewSite = useCallback(
     async (name: string) => {
-      if (!userId) throw new Error("Not authenticated");
-      const site = await createSite(userId, name);
-      setSites((prev) => [...prev, site]);
-      return site;
+      if (!user) throw new Error("Not authenticated");
+      const resp = await authedFetch(user, "/api/sites", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to create site");
+      }
+      const data = (await resp.json()) as { site: Site };
+      setSites((prev) => [...prev, data.site]);
+      return data.site;
     },
-    [userId]
+    [user]
   );
 
   const renameSiteById = useCallback(
     async (siteId: string, name: string) => {
-      if (!userId) throw new Error("Not authenticated");
-      await renameSite(userId, siteId, name);
+      if (!user) throw new Error("Not authenticated");
+      const resp = await authedFetch(user, `/api/sites/${siteId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to rename site");
+      }
       setSites((prev) =>
         prev.map((s) => (s.id === siteId ? { ...s, name } : s))
       );
     },
-    [userId]
+    [user]
   );
 
   const deleteSiteById = useCallback(
     async (siteId: string) => {
-      if (!userId) throw new Error("Not authenticated");
+      if (!user) throw new Error("Not authenticated");
       if (sites.length <= 1) {
         throw new Error("You cannot delete your last site.");
       }
-      await deleteSiteService(userId, siteId);
+      const resp = await authedFetch(user, `/api/sites/${siteId}`, {
+        method: "DELETE",
+      });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data?.error || "Failed to delete site");
+      }
       const remaining = sites.filter((s) => s.id !== siteId);
       setSites(remaining);
       if (activeSiteId === siteId && remaining.length > 0) {
         await switchSite(remaining[0].id);
       }
     },
-    [userId, sites, activeSiteId, switchSite]
+    [user, sites, activeSiteId, switchSite]
   );
 
   const activeSite = useMemo(

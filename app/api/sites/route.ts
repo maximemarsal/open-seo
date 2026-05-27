@@ -5,6 +5,7 @@ import {
   listSitesServer,
   createSiteServer,
   setActiveSiteIdServer,
+  getActiveSiteIdServer,
 } from "@/lib/services/sites.server";
 
 async function authUser(request: NextRequest): Promise<string | NextResponse> {
@@ -29,8 +30,25 @@ async function authUser(request: NextRequest): Promise<string | NextResponse> {
 export async function GET(request: NextRequest) {
   const r = await authUser(request);
   if (r instanceof NextResponse) return r;
-  const sites = await listSitesServer(r);
-  return NextResponse.json({ sites });
+  const userId = r;
+  const [sites, activeSiteId] = await Promise.all([
+    listSitesServer(userId),
+    getActiveSiteIdServer(userId),
+  ]);
+  // If for any reason activeSiteId isn't set but sites exist, fall back to
+  // the first site so the client doesn't end up with `null`.
+  const fallback =
+    activeSiteId && sites.find((s) => s.id === activeSiteId)
+      ? activeSiteId
+      : sites[0]?.id || null;
+  if (fallback && fallback !== activeSiteId) {
+    try {
+      await setActiveSiteIdServer(userId, fallback);
+    } catch (err) {
+      console.warn("Failed to set fallback activeSiteId:", err);
+    }
+  }
+  return NextResponse.json({ sites, activeSiteId: fallback });
 }
 
 export async function POST(request: NextRequest) {
