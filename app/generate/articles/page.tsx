@@ -14,6 +14,7 @@ import {
   Filter,
   MoreVertical,
   ExternalLink,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
@@ -112,8 +113,18 @@ export default function ArticlesPage() {
       toast.success("Article published successfully!");
     } catch (error: any) {
       console.error("Error publishing article:", error);
-      toast.error(error.message || "Failed to publish article");
+      toast.error(error.message || "Failed to publish article", {
+        duration: 8000,
+      });
     }
+  };
+
+  const handleRepublish = async (articleId: string) => {
+    const ok = window.confirm(
+      "Republier cet article ? Si un article existe déjà sur WordPress, cela peut créer un doublon (à nettoyer manuellement côté WP)."
+    );
+    if (!ok) return;
+    await handlePublishNow(articleId);
   };
 
   const filteredArticles = articles.filter((article) => {
@@ -343,6 +354,16 @@ export default function ArticlesPage() {
                       >
                         <ExternalLink className="w-5 h-5 text-green-500" />
                       </a>
+                    )}
+
+                    {article.status === "published" && (
+                      <button
+                        onClick={() => handleRepublish(article.id)}
+                        className="p-2 hover:bg-orange-50 rounded-lg transition-colors"
+                        title="Republish to WordPress (if it's stuck or not visible)"
+                      >
+                        <RefreshCw className="w-5 h-5 text-orange-500" />
+                      </button>
                     )}
 
                     <button

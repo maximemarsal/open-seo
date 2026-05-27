@@ -81,6 +81,36 @@ export class WordPressService {
 
       const postId = response.data.id;
       const editUrl = `${this.credentials.url}/wp-admin/post.php?post=${postId}&action=edit`;
+      const actualStatus: string | undefined = response.data?.status;
+
+      // 1.b If we asked for "publish" but WP silently downgraded it (typical when
+      // the WP application-password user lacks the `publish_posts` capability —
+      // e.g. Author / Contributor roles), surface a clear error so our caller
+      // doesn't mark the article as published.
+      if (status === "publish" && actualStatus && actualStatus !== "publish") {
+        // Try to elevate the post: PATCH it with status=publish — sometimes
+        // this is allowed even when the initial POST silently demotes.
+        let elevated = false;
+        try {
+          const elevateResp = await this.wordpressApi.post(`/posts/${postId}`, {
+            status: "publish",
+          });
+          if (elevateResp.data?.status === "publish") {
+            elevated = true;
+          }
+        } catch (elevateErr) {
+          // ignore — we'll throw below
+        }
+
+        if (!elevated) {
+          throw new Error(
+            `WordPress accepted the post but did NOT publish it (status returned: "${actualStatus}"). ` +
+              `The post was created (id ${postId}) but is still a draft on WordPress. ` +
+              `Most likely the application-password user lacks the "publish_posts" capability — ` +
+              `use an Administrator or Editor account, or grant publish_posts to this role.`
+          );
+        }
+      }
 
       // 2. If successful, update with tags only (no categories — WP will use its default category)
       try {
