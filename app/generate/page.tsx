@@ -29,8 +29,15 @@ import MissingApiKeyModal from "../../components/MissingApiKeyModal";
 import CTAModal from "../../components/CTAModal";
 import CTAPreview from "../../components/CTAPreview";
 import { getUserApiKeys } from "../../lib/services/userKeys";
+import { getWpCredentials } from "../../lib/services/wpCredentials";
+import { useSite } from "../../contexts/SiteContext";
 
-const LAST_CONFIG_KEY = "lastGenerationConfig";
+// Scope last-generation-config per user+site so switching sites doesn't leak
+// state across sites.
+function buildLastConfigKey(userId?: string, siteId?: string | null) {
+  if (!userId || !siteId) return "lastGenerationConfig";
+  return `lastGenerationConfig.${userId}.${siteId}`;
+}
 
 // GPT-5.5 and above use a different effort scale (no "minimal", adds "xhigh")
 function isGpt55Plus(model: string): boolean {
@@ -46,6 +53,7 @@ function isGpt55Plus(model: string): boolean {
 
 export default function GeneratePage() {
   const { user, loading: authLoading, logout } = useAuth();
+  const { activeSiteId, activeSite } = useSite();
   const router = useRouter();
   const [topic, setTopic] = useState("");
   const [publishToWordPress, setPublishToWordPress] = useState(false);
@@ -208,7 +216,9 @@ export default function GeneratePage() {
       return;
     }
     try {
-      const raw = localStorage.getItem(LAST_CONFIG_KEY);
+      const raw = localStorage.getItem(
+        buildLastConfigKey(user?.uid, activeSiteId)
+      );
       if (!raw) return;
       const cfg = JSON.parse(raw);
       setTopic(cfg.topic || "");
@@ -265,7 +275,10 @@ export default function GeneratePage() {
       ctas,
     };
     try {
-      localStorage.setItem(LAST_CONFIG_KEY, JSON.stringify(cfg));
+      localStorage.setItem(
+        buildLastConfigKey(user?.uid, activeSiteId),
+        JSON.stringify(cfg)
+      );
     } catch (e) {
       console.error("Error saving last config:", e);
     }
@@ -411,6 +424,24 @@ export default function GeneratePage() {
         });
       }
 
+      // Check WordPress credentials per active site if user wants to publish
+      if (publishToWordPress && activeSiteId) {
+        const wp = await getWpCredentials(user.uid, activeSiteId);
+        if (
+          !wp?.wordpressUrl ||
+          !wp?.wordpressUsername ||
+          !wp?.wordpressPassword
+        ) {
+          missing.push({
+            key: "wordpressUrl",
+            label: `WordPress credentials for site "${
+              activeSite?.name || "active"
+            }"`,
+            placeholder: "Configure in Settings",
+          });
+        }
+      }
+
       // If there are missing keys, show the modal
       if (missing.length > 0) {
         setMissingKeys(missing);
@@ -443,6 +474,7 @@ export default function GeneratePage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({
           topic,
@@ -586,6 +618,7 @@ export default function GeneratePage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({
           title: result.seoMetadata?.metaTitle || topic,
@@ -634,6 +667,7 @@ export default function GeneratePage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({
           title: result.seoMetadata?.metaTitle || topic,
@@ -1625,6 +1659,7 @@ export default function GeneratePage() {
         existingCTA={editingCTA}
         maxPosition={result?.outline?.sections?.length || 6}
         userId={user?.uid || ""}
+        siteId={activeSiteId || undefined}
       />
     </div>
   );

@@ -7,13 +7,14 @@ export interface UserProfile {
   lastWpSyncAt?: string;
 }
 
-const PROFILE_PATH = (userId: string) =>
-  doc(db, "users", userId, "private", "profile");
+const profileDoc = (userId: string, siteId: string) =>
+  doc(db, "users", userId, "sites", siteId, "private", "profile");
 
 export async function getUserProfile(
-  userId: string
+  userId: string,
+  siteId: string
 ): Promise<UserProfile | null> {
-  const docSnap = await getDoc(PROFILE_PATH(userId));
+  const docSnap = await getDoc(profileDoc(userId, siteId));
   if (!docSnap.exists()) return null;
   const { updatedAt, ...rest } = docSnap.data();
   return rest as UserProfile;
@@ -21,10 +22,11 @@ export async function getUserProfile(
 
 export async function saveUserProfile(
   userId: string,
+  siteId: string,
   partial: Partial<UserProfile>
 ): Promise<void> {
   await setDoc(
-    PROFILE_PATH(userId),
+    profileDoc(userId, siteId),
     { ...partial, updatedAt: new Date().toISOString() },
     { merge: true }
   );

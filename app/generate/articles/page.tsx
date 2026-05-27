@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
+import { useSite } from "../../../contexts/SiteContext";
 import { useRouter } from "next/navigation";
 import { SavedArticle } from "../../../types/blog";
 
@@ -25,6 +26,7 @@ type StatusFilter = "all" | "draft" | "scheduled" | "published";
 
 export default function ArticlesPage() {
   const { user, loading: authLoading } = useAuth();
+  const { activeSiteId, activeSite } = useSite();
   const router = useRouter();
   const [articles, setArticles] = useState<SavedArticle[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -40,18 +42,21 @@ export default function ArticlesPage() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (user) {
+    if (user && activeSiteId) {
       fetchArticles();
     }
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, activeSiteId]);
 
   const fetchArticles = async () => {
+    if (!activeSiteId) return;
     try {
       setIsLoading(true);
       const idToken = await user?.getIdToken();
       const response = await fetch("/api/articles", {
         headers: {
           Authorization: `Bearer ${idToken}`,
+          "x-site-id": activeSiteId,
         },
       });
 
@@ -76,6 +81,7 @@ export default function ArticlesPage() {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
       });
 
@@ -96,6 +102,7 @@ export default function ArticlesPage() {
         method: "POST",
         headers: {
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
       });
 

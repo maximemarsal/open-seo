@@ -13,9 +13,15 @@ import {
 } from "../../../types/blog";
 import { UnsplashService } from "../../../lib/services/unsplash";
 import { config as appConfig } from "../../../lib/config";
-import { verifyIdToken, getTokenFromHeader } from "../../../lib/auth-server";
+import {
+  verifyIdToken,
+  getTokenFromHeader,
+  resolveSiteId,
+} from "../../../lib/auth-server";
 import { getUserApiKeysServer } from "../../../lib/services/userKeys.server";
 import { getUserProfileServer } from "../../../lib/services/userProfile.server";
+import { ensureUserMigrated } from "../../../lib/services/migration.server";
+import { getWpCredentialsServer } from "../../../lib/services/wpCredentials.server";
 
 // Helper function to parse and format error messages
 function parseErrorMessage(
@@ -162,8 +168,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Get user API keys from Firestore
+    // Migrate legacy user data on first authenticated call.
+    await ensureUserMigrated(userId);
+
+    // Resolve which site this request targets.
+    let siteId: string;
+    try {
+      siteId = await resolveSiteId(request, userId);
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err?.message || "No site available" },
+        { status: 400 }
+      );
+    }
+
+    // 2. Get user API keys from Firestore (shared) + per-site WP credentials
     const userKeys = await getUserApiKeysServer(userId);
+    const wpCreds = await getWpCredentialsServer(userId, siteId);
 
     // 3. Merge user keys with environment variables (user keys take priority)
     const effectiveKeys = {
@@ -176,9 +197,9 @@ export async function POST(request: NextRequest) {
       grok: userKeys?.grokKey || process.env.GROK_API_KEY,
       unsplash: userKeys?.unsplashKey || process.env.UNSPLASH_ACCESS_KEY,
       wordpress: {
-        url: userKeys?.wordpressUrl || process.env.WORDPRESS_URL,
-        username: userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME,
-        password: userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD,
+        url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL,
+        username: wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME,
+        password: wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD,
       },
     };
 
@@ -344,8 +365,8 @@ export async function POST(request: NextRequest) {
         };
 
         try {
-          // Load user profile to enrich context with today's date + business context
-          const profile = await getUserProfileServer(userId);
+          // Load user profile (per-site) to enrich context with today's date + business context
+          const profile = await getUserProfileServer(userId, siteId);
           const today = new Date().toLocaleDateString("fr-FR", {
             weekday: "long",
             year: "numeric",

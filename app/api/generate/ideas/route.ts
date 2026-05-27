@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyIdToken, getTokenFromHeader } from "@/lib/auth-server";
+import {
+  verifyIdToken,
+  getTokenFromHeader,
+  resolveSiteId,
+} from "@/lib/auth-server";
 import { getUserApiKeysServer } from "@/lib/services/userKeys.server";
 import { getUserProfileServer } from "@/lib/services/userProfile.server";
+import { ensureUserMigrated } from "@/lib/services/migration.server";
 import { config as appConfig } from "@/lib/config";
 import { AITextGenerator, ChatMessage } from "@/lib/services/ai";
 
@@ -77,13 +82,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await ensureUserMigrated(userId);
+    let siteId: string;
+    try {
+      siteId = await resolveSiteId(request, userId);
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err?.message || "No site available" },
+        { status: 400 }
+      );
+    }
+
     const body = await request.json().catch(() => ({}));
     const count = Math.min(Math.max(parseInt(body.count, 10) || 10, 1), 30);
     const provider: Provider = (body.aiProvider as Provider) || "openai";
     const model: string = body.model || DEFAULT_MODELS[provider];
 
     const userKeys = await getUserApiKeysServer(userId);
-    const profile = await getUserProfileServer(userId);
+    const profile = await getUserProfileServer(userId, siteId);
 
     const effectiveKey: Record<Provider, string | undefined> = {
       openai: userKeys?.openaiKey || process.env.OPENAI_API_KEY,

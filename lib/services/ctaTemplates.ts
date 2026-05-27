@@ -28,16 +28,20 @@ function removeUndefined(obj: any): any {
   return cleaned;
 }
 
+const ctaDocRef = (userId: string, siteId: string) =>
+  doc(db, "users", userId, "sites", siteId, "private", "ctaTemplates");
+
 /**
- * Save a CTA template to Firestore.
+ * Save a CTA template to Firestore (per site).
  * Templates are stored in a single doc:
- * /users/{userId}/private/ctaTemplates
+ * /users/{userId}/sites/{siteId}/private/ctaTemplates
  */
 export async function saveCTATemplate(
   userId: string,
+  siteId: string,
   template: Omit<CTATemplate, "createdAt" | "updatedAt">
 ): Promise<void> {
-  const docRef = doc(db, "users", userId, "private", "ctaTemplates");
+  const docRef = ctaDocRef(userId, siteId);
 
   const snap = await getDoc(docRef);
   const existing = snap.exists()
@@ -61,12 +65,13 @@ export async function saveCTATemplate(
 }
 
 /**
- * Get all CTA templates for a user
+ * Get all CTA templates for a user/site
  */
 export async function getCTATemplates(
-  userId: string
+  userId: string,
+  siteId: string
 ): Promise<CTATemplate[]> {
-  const docRef = doc(db, "users", userId, "private", "ctaTemplates");
+  const docRef = ctaDocRef(userId, siteId);
   const snap = await getDoc(docRef);
   if (!snap.exists()) return [];
   const data = snap.data();
@@ -78,9 +83,10 @@ export async function getCTATemplates(
  */
 export async function deleteCTATemplate(
   userId: string,
+  siteId: string,
   templateId: string
 ): Promise<void> {
-  const docRef = doc(db, "users", userId, "private", "ctaTemplates");
+  const docRef = ctaDocRef(userId, siteId);
   const snap = await getDoc(docRef);
   if (!snap.exists()) return;
 
@@ -98,10 +104,11 @@ export async function deleteCTATemplate(
  */
 export async function updateCTATemplate(
   userId: string,
+  siteId: string,
   templateId: string,
   template: Omit<CTATemplate, "id" | "createdAt" | "updatedAt">
 ): Promise<void> {
-  const docRef = doc(db, "users", userId, "private", "ctaTemplates");
+  const docRef = ctaDocRef(userId, siteId);
   const docSnap = await getDoc(docRef);
 
   if (!docSnap.exists()) {
@@ -127,4 +134,3 @@ export async function updateCTATemplate(
     updatedAt: new Date().toISOString(),
   });
 }
-

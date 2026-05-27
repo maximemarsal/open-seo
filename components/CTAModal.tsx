@@ -20,6 +20,8 @@ interface CTAModalProps {
   existingCTA?: CTA;
   maxPosition: number;
   userId: string;
+  /** Site id used to scope CTA templates. Required for template save/load. */
+  siteId?: string;
 }
 
 export default function CTAModal({
@@ -29,6 +31,7 @@ export default function CTAModal({
   existingCTA,
   maxPosition,
   userId,
+  siteId,
 }: CTAModalProps) {
   const [title, setTitle] = useState(existingCTA?.title || "");
   const [description, setDescription] = useState(
@@ -83,16 +86,16 @@ export default function CTAModal({
   // Load templates when modal opens (only if userId is provided -> real generator, not landing guest)
   useEffect(() => {
     const loadTemplates = async () => {
-      if (!isOpen || !userId) return;
+      if (!isOpen || !userId || !siteId) return;
       try {
-        const templates = await getCTATemplates(userId);
+        const templates = await getCTATemplates(userId, siteId);
         setCtaTemplates(templates);
       } catch (error) {
         console.error("Error loading templates:", error);
       }
     };
     loadTemplates();
-  }, [isOpen, userId]);
+  }, [isOpen, userId, siteId]);
 
   useEffect(() => {
     if (existingCTA) {
@@ -142,7 +145,7 @@ export default function CTAModal({
 
   // Delete template
   const handleDeleteTemplate = async () => {
-    if (!userId || !selectedTemplate) return;
+    if (!userId || !siteId || !selectedTemplate) return;
 
     const template = ctaTemplates.find((t) => t.id === selectedTemplate);
     if (!template) return;
@@ -150,10 +153,10 @@ export default function CTAModal({
     if (!confirm(`Delete template "${template.name}"?`)) return;
 
     try {
-      await deleteCTATemplate(userId, selectedTemplate);
+      await deleteCTATemplate(userId, siteId, selectedTemplate);
 
       // Reload templates
-      const updatedTemplates = await getCTATemplates(userId);
+      const updatedTemplates = await getCTATemplates(userId, siteId);
       setCtaTemplates(updatedTemplates);
 
       // Reset selection
@@ -257,8 +260,8 @@ export default function CTAModal({
       customColors: style === "custom" ? customColors : undefined,
     };
 
-    // Save as template if requested (only when we have a valid userId, i.e. in real generator)
-    if (userId && saveAsTemplate && templateName.trim()) {
+    // Save as template if requested (only when we have a valid userId+siteId, i.e. in real generator)
+    if (userId && siteId && saveAsTemplate && templateName.trim()) {
       try {
         const { id, imageFile, ...ctaData } = cta;
         const template: Omit<CTATemplate, "createdAt" | "updatedAt"> = {
@@ -266,7 +269,7 @@ export default function CTAModal({
           name: templateName.trim(),
           cta: ctaData,
         };
-        await saveCTATemplate(userId, template);
+        await saveCTATemplate(userId, siteId, template);
         toast.success("CTA saved as template!");
       } catch (error) {
         console.error("Error saving template:", error);

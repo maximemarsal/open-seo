@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WordPressService } from "@/lib/services/wordpress";
-import { verifyIdToken, getTokenFromHeader } from "@/lib/auth-server";
-import { getUserApiKeysServer } from "@/lib/services/userKeys.server";
+import {
+  verifyIdToken,
+  getTokenFromHeader,
+  resolveSiteId,
+} from "@/lib/auth-server";
+import { ensureUserMigrated } from "@/lib/services/migration.server";
+import { getWpCredentialsServer } from "@/lib/services/wpCredentials.server";
 import { setKnownTitles } from "@/lib/services/userProfile.server";
 import { getUserArticles } from "@/lib/services/articles.server";
 
@@ -24,13 +29,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userKeys = await getUserApiKeysServer(userId);
+    await ensureUserMigrated(userId);
+    let siteId: string;
+    try {
+      siteId = await resolveSiteId(request, userId);
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err?.message || "No site available" },
+        { status: 400 }
+      );
+    }
+
+    const wpCreds = await getWpCredentialsServer(userId, siteId);
     const wordpressCredentials = {
-      url: userKeys?.wordpressUrl || process.env.WORDPRESS_URL || "",
+      url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL || "",
       username:
-        userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
+        wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
       password:
-        userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
+        wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
     };
 
     if (
@@ -40,8 +56,8 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: "WordPress is not configured",
-          hint: "Add your WordPress credentials in Settings first.",
+          error: "WordPress is not configured for this site",
+          hint: "Add your WordPress credentials in Settings for the active site.",
         },
         { status: 400 }
       );
@@ -51,14 +67,18 @@ export async function POST(request: NextRequest) {
     const wpPosts = await wordpressService.fetchAllPostTitles();
     const wpTitles = wpPosts.map((p) => p.title).filter(Boolean);
 
-    // Include locally published titles too (in case some weren't pulled or are pending)
-    const localArticles = await getUserArticles(userId);
+    // Include locally published titles too
+    const localArticles = await getUserArticles(userId, siteId);
     const localTitles = localArticles
       .map((a) => a.title || a.seoMetadata?.metaTitle || "")
       .filter(Boolean);
 
     const allTitles = [...wpTitles, ...localTitles];
-    const { count, lastWpSyncAt } = await setKnownTitles(userId, allTitles);
+    const { count, lastWpSyncAt } = await setKnownTitles(
+      userId,
+      siteId,
+      allTitles
+    );
 
     return NextResponse.json({
       success: true,

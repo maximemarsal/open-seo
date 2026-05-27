@@ -28,8 +28,11 @@ export interface UserApiKeys {
   qwenKey?: string;
   grokKey?: string;
   unsplashKey?: string;
+  /** @deprecated WordPress creds moved to per-site wpCredentials. Kept only so the migration can read legacy data. */
   wordpressUrl?: string;
+  /** @deprecated WordPress creds moved to per-site wpCredentials. Kept only so the migration can read legacy data. */
   wordpressUsername?: string;
+  /** @deprecated WordPress creds moved to per-site wpCredentials. Kept only so the migration can read legacy data. */
   wordpressPassword?: string;
 }
 

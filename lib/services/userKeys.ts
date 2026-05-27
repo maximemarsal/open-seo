@@ -10,8 +10,11 @@ export interface UserApiKeys {
   qwenKey?: string;
   grokKey?: string;
   unsplashKey?: string;
+  /** @deprecated moved to per-site wpCredentials; kept only for legacy reads/migration */
   wordpressUrl?: string;
+  /** @deprecated moved to per-site wpCredentials; kept only for legacy reads/migration */
   wordpressUsername?: string;
+  /** @deprecated moved to per-site wpCredentials; kept only for legacy reads/migration */
   wordpressPassword?: string;
 }
 

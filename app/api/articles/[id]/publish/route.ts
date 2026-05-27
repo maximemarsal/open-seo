@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyIdToken, getTokenFromHeader } from "../../../../../lib/auth-server";
-import { getUserApiKeysServer } from "../../../../../lib/services/userKeys.server";
+import {
+  verifyIdToken,
+  getTokenFromHeader,
+  resolveSiteId,
+} from "../../../../../lib/auth-server";
+import { ensureUserMigrated } from "../../../../../lib/services/migration.server";
+import { getWpCredentialsServer } from "../../../../../lib/services/wpCredentials.server";
 import {
   getArticleById,
   markArticlePublished,
@@ -13,15 +18,13 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authHeader = request.headers.get("authorization");
-    const idToken = getTokenFromHeader(authHeader);
+    const idToken = getTokenFromHeader(request.headers.get("authorization"));
     if (!idToken) {
       return NextResponse.json(
         { error: "Authentication required" },
         { status: 401 }
       );
     }
-
     const userId = await verifyIdToken(idToken);
     if (!userId) {
       return NextResponse.json(
@@ -29,13 +32,17 @@ export async function POST(
         { status: 401 }
       );
     }
+    await ensureUserMigrated(userId);
+    const siteId = await resolveSiteId(request, userId);
 
-    // Get user's WordPress credentials
-    const userKeys = await getUserApiKeysServer(userId);
+    // Get this site's WordPress credentials
+    const wpCreds = await getWpCredentialsServer(userId, siteId);
     const wordpressCredentials = {
-      url: userKeys?.wordpressUrl || process.env.WORDPRESS_URL || "",
-      username: userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
-      password: userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
+      url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL || "",
+      username:
+        wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
+      password:
+        wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
     };
 
     if (
@@ -45,15 +52,15 @@ export async function POST(
     ) {
       return NextResponse.json(
         {
-          error: "WordPress is not configured",
-          hint: "Add your WordPress credentials in Settings.",
+          error: "WordPress is not configured for this site",
+          hint: "Add your WordPress credentials in Settings for the active site.",
         },
         { status: 400 }
       );
     }
 
-    // Get the article
-    const article = await getArticleById(userId, params.id);
+    // Get the article (from the active site)
+    const article = await getArticleById(userId, siteId, params.id);
     if (!article) {
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
@@ -86,6 +93,7 @@ export async function POST(
     // Mark as published in our database
     const updatedArticle = await markArticlePublished(
       userId,
+      siteId,
       params.id,
       result.postId,
       result.editUrl
@@ -110,4 +118,3 @@ export async function POST(
     );
   }
 }
-

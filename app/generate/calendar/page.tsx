@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
+import { useSite } from "../../../contexts/SiteContext";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SavedArticle } from "../../../types/blog";
 
@@ -43,6 +44,7 @@ const isPastDate = (date: Date, hour?: number) => {
 
 function CalendarPageContent() {
   const { user, loading: authLoading } = useAuth();
+  const { activeSiteId } = useSite();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [articles, setArticles] = useState<SavedArticle[]>([]);
@@ -63,10 +65,11 @@ function CalendarPageContent() {
   }, [user, authLoading, router]);
 
   useEffect(() => {
-    if (user) {
+    if (user && activeSiteId) {
       fetchArticles();
     }
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, activeSiteId]);
 
   useEffect(() => {
     const articleId = searchParams.get("articleId");
@@ -80,11 +83,15 @@ function CalendarPageContent() {
   }, [searchParams, articles]);
 
   const fetchArticles = async () => {
+    if (!activeSiteId) return;
     try {
       setIsLoading(true);
       const idToken = await user?.getIdToken();
       const response = await fetch("/api/articles", {
-        headers: { Authorization: `Bearer ${idToken}` },
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "x-site-id": activeSiteId,
+        },
       });
       if (!response.ok) throw new Error("Failed to fetch articles");
       const data = await response.json();
@@ -114,6 +121,7 @@ function CalendarPageContent() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({ scheduledAt: scheduledDate.toISOString() }),
       });
@@ -139,7 +147,10 @@ function CalendarPageContent() {
       const idToken = await user?.getIdToken();
       const response = await fetch(`/api/articles/${articleId}/schedule`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${idToken}` },
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+        },
       });
       if (!response.ok) throw new Error("Failed to unschedule");
       const data = await response.json();
@@ -156,7 +167,10 @@ function CalendarPageContent() {
       const idToken = await user?.getIdToken();
       const response = await fetch(`/api/articles/${articleId}/publish`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+        },
       });
       if (!response.ok) {
         const data = await response.json();

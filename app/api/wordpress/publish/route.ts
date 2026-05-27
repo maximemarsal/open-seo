@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WordPressService } from "@/lib/services/wordpress";
-import { verifyIdToken, getTokenFromHeader } from "@/lib/auth-server";
-import { getUserApiKeysServer } from "@/lib/services/userKeys.server";
+import {
+  verifyIdToken,
+  getTokenFromHeader,
+  resolveSiteId,
+} from "@/lib/auth-server";
+import { ensureUserMigrated } from "@/lib/services/migration.server";
+import { getWpCredentialsServer } from "@/lib/services/wpCredentials.server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,14 +37,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const userKeys = await getUserApiKeysServer(userId);
+    await ensureUserMigrated(userId);
+    let siteId: string;
+    try {
+      siteId = await resolveSiteId(request, userId);
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: err?.message || "No site available" },
+        { status: 400 }
+      );
+    }
+
+    const wpCreds = await getWpCredentialsServer(userId, siteId);
     const wordpressCredentials = {
-      url: userKeys?.wordpressUrl || process.env.WORDPRESS_URL || "",
-      username: userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
-      password: userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
+      url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL || "",
+      username:
+        wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
+      password:
+        wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
     };
 
-    // Check if WordPress is configured (user keys take priority over env)
     if (
       !wordpressCredentials.url ||
       !wordpressCredentials.username ||
@@ -47,9 +64,8 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: "WordPress is not configured",
-          hint:
-            "Add your WordPress URL, username and application password in Settings, or set WORDPRESS_URL/USERNAME/PASSWORD.",
+          error: "WordPress is not configured for this site",
+          hint: "Add your WordPress URL, username and application password in Settings for the active site.",
         },
         { status: 400 }
       );

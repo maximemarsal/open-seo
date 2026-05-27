@@ -41,3 +41,43 @@ export function getTokenFromHeader(authHeader: string | null): string | null {
   }
   return authHeader.substring(7);
 }
+
+/**
+ * Resolve the active site for the request.
+ *
+ * Lookup order:
+ *   1. `x-site-id` header (if present and owned by this user)
+ *   2. The activeSiteId stored at users/{userId}/settings/active
+ *   3. Throws an Error if no site can be resolved (route should 400)
+ *
+ * Callers MUST have called `ensureUserMigrated(userId)` first, so an account
+ * with legacy data will always have at least one site by the time this runs.
+ */
+export async function resolveSiteId(
+  request: Request,
+  userId: string
+): Promise<string> {
+  // Local imports to avoid pulling firebase-admin into client bundles.
+  const [{ getSiteServer, getActiveSiteIdServer, listSitesServer }] =
+    await Promise.all([import("./services/sites.server")]);
+
+  const headerSite = request.headers.get("x-site-id")?.trim();
+  if (headerSite) {
+    const owned = await getSiteServer(userId, headerSite);
+    if (owned) return headerSite;
+    // Header was supplied but doesn't belong to this user — silently fall
+    // back to active site rather than leaking ownership info.
+  }
+
+  const activeSiteId = await getActiveSiteIdServer(userId);
+  if (activeSiteId) {
+    const owned = await getSiteServer(userId, activeSiteId);
+    if (owned) return activeSiteId;
+  }
+
+  // Absolute fallback: pick the user's first site if any exists.
+  const sites = await listSitesServer(userId);
+  if (sites.length > 0) return sites[0].id;
+
+  throw new Error("No site available for this user");
+}

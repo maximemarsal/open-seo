@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import Sidebar from "../../components/Sidebar";
 import { SidebarProvider, useSidebar } from "../../contexts/SidebarContext";
+import { SiteProvider } from "../../contexts/SiteContext";
 
 function GenerateContent({ children }: { children: React.ReactNode }) {
   const { isCollapsed } = useSidebar();
@@ -29,8 +30,10 @@ export default function GenerateLayout({
   children: React.ReactNode;
 }) {
   return (
-    <SidebarProvider>
-      <GenerateContent>{children}</GenerateContent>
-    </SidebarProvider>
+    <SiteProvider>
+      <SidebarProvider>
+        <GenerateContent>{children}</GenerateContent>
+      </SidebarProvider>
+    </SiteProvider>
   );
 }

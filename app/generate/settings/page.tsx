@@ -24,6 +24,11 @@ import {
   getUserProfile,
   saveUserProfile,
 } from "../../../lib/services/userProfile";
+import {
+  getWpCredentials,
+  saveWpCredentials,
+} from "../../../lib/services/wpCredentials";
+import { useSite } from "../../../contexts/SiteContext";
 import ApiKeyTooltip from "../../../components/ApiKeyTooltip";
 
 interface ApiKeys {
@@ -42,6 +47,7 @@ interface ApiKeys {
 
 export default function SettingsPage() {
   const { user, loading: authLoading } = useAuth();
+  const { activeSiteId, activeSite } = useSite();
   const router = useRouter();
   const [showKeys, setShowKeys] = useState<{ [key: string]: boolean }>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -97,36 +103,43 @@ export default function SettingsPage() {
   // Load from Firestore on mount
   useEffect(() => {
     const loadAll = async () => {
-      if (!user) return;
+      if (!user || !activeSiteId) return;
 
       try {
         setIsLoading(true);
-        const [keys, profile] = await Promise.all([
+        const [keys, profile, wp] = await Promise.all([
           getUserApiKeys(user.uid),
-          getUserProfile(user.uid),
+          getUserProfile(user.uid, activeSiteId),
+          getWpCredentials(user.uid, activeSiteId),
         ]);
-        if (keys) {
-          const loadedKeys = {
-            openaiKey: keys.openaiKey || "",
-            perplexityKey: keys.perplexityKey || "",
-            anthropicKey: keys.anthropicKey || "",
-            geminiKey: keys.geminiKey || "",
-            deepseekKey: keys.deepseekKey || "",
-            qwenKey: keys.qwenKey || "",
-            grokKey: keys.grokKey || "",
-            unsplashKey: keys.unsplashKey || "",
-            wordpressUrl: keys.wordpressUrl || "",
-            wordpressUsername: keys.wordpressUsername || "",
-            wordpressPassword: keys.wordpressPassword || "",
-          };
-          setApiKeys(loadedKeys);
-          setOriginalKeys(loadedKeys);
-        }
+        const loadedKeys = {
+          openaiKey: keys?.openaiKey || "",
+          perplexityKey: keys?.perplexityKey || "",
+          anthropicKey: keys?.anthropicKey || "",
+          geminiKey: keys?.geminiKey || "",
+          deepseekKey: keys?.deepseekKey || "",
+          qwenKey: keys?.qwenKey || "",
+          grokKey: keys?.grokKey || "",
+          unsplashKey: keys?.unsplashKey || "",
+          // WP credentials are now per-site
+          wordpressUrl: wp?.wordpressUrl || "",
+          wordpressUsername: wp?.wordpressUsername || "",
+          wordpressPassword: wp?.wordpressPassword || "",
+        };
+        setApiKeys(loadedKeys);
+        setOriginalKeys(loadedKeys);
+
         if (profile) {
           setBusinessContext(profile.businessContext || "");
           setOriginalBusinessContext(profile.businessContext || "");
           setKnownTitlesCount((profile.knownArticleTitles || []).length);
           setLastWpSyncAt(profile.lastWpSyncAt || null);
+        } else {
+          // Reset for new sites with no profile yet
+          setBusinessContext("");
+          setOriginalBusinessContext("");
+          setKnownTitlesCount(0);
+          setLastWpSyncAt(null);
         }
       } catch (error) {
         console.error("Error loading settings:", error);
@@ -137,7 +150,7 @@ export default function SettingsPage() {
     };
 
     loadAll();
-  }, [user]);
+  }, [user, activeSiteId]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -205,15 +218,31 @@ export default function SettingsPage() {
         }
       }
 
-      await saveUserApiKeys(user.uid, apiKeys);
+      // Persist non-WP keys (shared across sites)
+      const { wordpressUrl, wordpressUsername, wordpressPassword, ...aiAndOther } =
+        apiKeys;
+      await saveUserApiKeys(user.uid, aiAndOther);
+
+      // Persist WP credentials per-site
+      if (activeSiteId && hasWordPressChanges) {
+        await saveWpCredentials(user.uid, activeSiteId, {
+          wordpressUrl,
+          wordpressUsername,
+          wordpressPassword,
+        });
+      }
       setOriginalKeys(apiKeys);
       const wpWasChanged = hasWordPressChanges;
       setHasAiChanges(false);
       setHasOtherChanges(false);
       setHasWordPressChanges(false);
-      toast.success("Settings saved successfully!");
+      toast.success(
+        `Settings saved${
+          activeSite?.name ? ` for site "${activeSite.name}"` : ""
+        }!`
+      );
 
-      // Auto-sync titles on first WP credentials save (knownArticleTitles empty)
+      // Auto-sync titles on first WP credentials save (knownArticleTitles empty for this site)
       if (
         wpWasChanged &&
         apiKeys.wordpressUrl &&
@@ -236,13 +265,15 @@ export default function SettingsPage() {
   };
 
   const handleSaveContext = async () => {
-    if (!user) return;
+    if (!user || !activeSiteId) return;
     try {
       setIsSavingContext(true);
-      await saveUserProfile(user.uid, { businessContext });
+      await saveUserProfile(user.uid, activeSiteId, { businessContext });
       setOriginalBusinessContext(businessContext);
       setHasBusinessContextChanges(false);
-      toast.success("Business context saved!");
+      toast.success(
+        `Business context saved for site "${activeSite?.name || ""}"!`
+      );
     } catch (error) {
       console.error("Error saving business context:", error);
       toast.error("Failed to save business context");
@@ -271,6 +302,7 @@ export default function SettingsPage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
       });
       const data = await resp.json();
@@ -325,6 +357,17 @@ export default function SettingsPage() {
           <p className="text-gray-600">
             Configure your API keys and integrations
           </p>
+          {activeSite && (
+            <p className="text-sm text-blue-700 mt-2 inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg">
+              <span className="w-2 h-2 rounded-full bg-blue-500" />
+              Site actif :{" "}
+              <span className="font-semibold">{activeSite.name}</span>
+              <span className="text-gray-500">
+                · WordPress + Business Context sont par-site, les clés IA sont
+                partagées
+              </span>
+            </p>
+          )}
         </motion.div>
 
         {/* Info Banner */}

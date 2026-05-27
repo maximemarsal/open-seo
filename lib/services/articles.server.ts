@@ -1,6 +1,6 @@
-// Server-side service for managing articles in Firestore
+// Server-side service for managing articles in Firestore (per-site scoped)
 import { initializeApp, getApps, cert } from "firebase-admin/app";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore } from "firebase-admin/firestore";
 import { SavedArticle } from "../../types/blog";
 
 // Initialize Firebase Admin (server-side)
@@ -16,19 +16,27 @@ if (getApps().length === 0) {
 
 const adminDb = getFirestore();
 
+const articlesCol = (userId: string, siteId: string) =>
+  adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("sites")
+    .doc(siteId)
+    .collection("articles");
+
+const articleDoc = (userId: string, siteId: string, articleId: string) =>
+  articlesCol(userId, siteId).doc(articleId);
+
 /**
- * Save a new article to Firestore
+ * Save a new article to Firestore (per site)
  */
 export async function saveArticle(
   userId: string,
+  siteId: string,
   article: Omit<SavedArticle, "id" | "userId" | "createdAt" | "updatedAt">
 ): Promise<SavedArticle> {
   const now = new Date().toISOString();
-  const docRef = adminDb
-    .collection("users")
-    .doc(userId)
-    .collection("articles")
-    .doc();
+  const docRef = articlesCol(userId, siteId).doc();
 
   const savedArticle: SavedArticle = {
     ...article,
@@ -43,13 +51,13 @@ export async function saveArticle(
 }
 
 /**
- * Get all articles for a user
+ * Get all articles for a user/site
  */
-export async function getUserArticles(userId: string): Promise<SavedArticle[]> {
-  const snapshot = await adminDb
-    .collection("users")
-    .doc(userId)
-    .collection("articles")
+export async function getUserArticles(
+  userId: string,
+  siteId: string
+): Promise<SavedArticle[]> {
+  const snapshot = await articlesCol(userId, siteId)
     .orderBy("createdAt", "desc")
     .get();
 
@@ -61,15 +69,10 @@ export async function getUserArticles(userId: string): Promise<SavedArticle[]> {
  */
 export async function getArticleById(
   userId: string,
+  siteId: string,
   articleId: string
 ): Promise<SavedArticle | null> {
-  const docRef = adminDb
-    .collection("users")
-    .doc(userId)
-    .collection("articles")
-    .doc(articleId);
-
-  const docSnap = await docRef.get();
+  const docSnap = await articleDoc(userId, siteId, articleId).get();
   if (!docSnap.exists) return null;
 
   return docSnap.data() as SavedArticle;
@@ -80,14 +83,11 @@ export async function getArticleById(
  */
 export async function updateArticle(
   userId: string,
+  siteId: string,
   articleId: string,
   updates: Partial<SavedArticle>
 ): Promise<SavedArticle | null> {
-  const docRef = adminDb
-    .collection("users")
-    .doc(userId)
-    .collection("articles")
-    .doc(articleId);
+  const docRef = articleDoc(userId, siteId, articleId);
 
   const docSnap = await docRef.get();
   if (!docSnap.exists) return null;
@@ -108,44 +108,14 @@ export async function updateArticle(
  */
 export async function deleteArticle(
   userId: string,
+  siteId: string,
   articleId: string
 ): Promise<boolean> {
-  const docRef = adminDb
-    .collection("users")
-    .doc(userId)
-    .collection("articles")
-    .doc(articleId);
-
+  const docRef = articleDoc(userId, siteId, articleId);
   const docSnap = await docRef.get();
   if (!docSnap.exists) return false;
-
   await docRef.delete();
   return true;
-}
-
-/**
- * Get scheduled articles (for cron job)
- */
-export async function getScheduledArticlesDue(): Promise<SavedArticle[]> {
-  const now = new Date().toISOString();
-  
-  // Query all users' articles that are scheduled and due
-  const usersSnapshot = await adminDb.collection("users").get();
-  const dueArticles: SavedArticle[] = [];
-
-  for (const userDoc of usersSnapshot.docs) {
-    const articlesSnapshot = await userDoc.ref
-      .collection("articles")
-      .where("status", "==", "scheduled")
-      .where("scheduledAt", "<=", now)
-      .get();
-
-    for (const articleDoc of articlesSnapshot.docs) {
-      dueArticles.push(articleDoc.data() as SavedArticle);
-    }
-  }
-
-  return dueArticles;
 }
 
 /**
@@ -153,19 +123,16 @@ export async function getScheduledArticlesDue(): Promise<SavedArticle[]> {
  */
 export async function scheduleArticle(
   userId: string,
+  siteId: string,
   articleId: string,
   scheduledAt: string
 ): Promise<SavedArticle | null> {
-  const updated = await updateArticle(userId, articleId, {
+  const updated = await updateArticle(userId, siteId, articleId, {
     status: "scheduled",
     scheduledAt,
   });
   if (updated) {
-    await upsertScheduledIndex({
-      userId,
-      articleId,
-      scheduledAt,
-    });
+    await upsertScheduledIndex({ userId, siteId, articleId, scheduledAt });
   }
   return updated;
 }
@@ -175,14 +142,15 @@ export async function scheduleArticle(
  */
 export async function unscheduleArticle(
   userId: string,
+  siteId: string,
   articleId: string
 ): Promise<SavedArticle | null> {
-  const updated = await updateArticle(userId, articleId, {
+  const updated = await updateArticle(userId, siteId, articleId, {
     status: "draft",
     scheduledAt: null,
   });
   if (updated) {
-    await removeScheduledIndex(userId, articleId);
+    await removeScheduledIndex(userId, siteId, articleId);
   }
   return updated;
 }
@@ -192,61 +160,64 @@ export async function unscheduleArticle(
  */
 export async function markArticlePublished(
   userId: string,
+  siteId: string,
   articleId: string,
   wordpressPostId: number,
   wordpressEditUrl: string
 ): Promise<SavedArticle | null> {
-  const updated = await updateArticle(userId, articleId, {
+  const updated = await updateArticle(userId, siteId, articleId, {
     status: "published",
     publishedAt: new Date().toISOString(),
     wordpressPostId,
     wordpressEditUrl,
   });
   if (updated) {
-    await removeScheduledIndex(userId, articleId);
+    await removeScheduledIndex(userId, siteId, articleId);
   }
   return updated;
 }
 
-// Scheduled index helpers (global collection to avoid scanning all users)
+// Scheduled index helpers (global collection to avoid scanning all users/sites)
 type ScheduledIndex = {
   userId: string;
+  siteId: string;
   articleId: string;
   scheduledAt: string;
 };
 
+function scheduledDocId(userId: string, siteId: string, articleId: string) {
+  return `${userId}__${siteId}__${articleId}`;
+}
+
 async function upsertScheduledIndex(entry: ScheduledIndex) {
-  const docId = `${entry.userId}__${entry.articleId}`;
+  const docId = scheduledDocId(entry.userId, entry.siteId, entry.articleId);
   await adminDb.collection("scheduledArticles").doc(docId).set(entry);
 }
 
-async function removeScheduledIndex(userId: string, articleId: string) {
-  const docId = `${userId}__${articleId}`;
+async function removeScheduledIndex(
+  userId: string,
+  siteId: string,
+  articleId: string
+) {
+  const docId = scheduledDocId(userId, siteId, articleId);
   await adminDb.collection("scheduledArticles").doc(docId).delete();
 }
 
 /**
  * Atomically claim a scheduled article for publishing.
- *
- * Reads + deletes the scheduledArticles/{userId__articleId} doc in a single
- * Firestore transaction. Returns true only if THIS caller won the race.
- *
- * This prevents the cron from publishing the same article multiple times when:
- *  - Vercel runs overlapping cron invocations (function takes > schedule interval)
- *  - A previous cron run created the WP post but timed out before
- *    markArticlePublished could remove the index
- *  - External + Vercel cron both ping the endpoint
+ * Returns true only if THIS caller won the race.
  */
 export async function tryClaimScheduledEntry(
   userId: string,
+  siteId: string,
   articleId: string
 ): Promise<boolean> {
-  const docId = `${userId}__${articleId}`;
+  const docId = scheduledDocId(userId, siteId, articleId);
   const ref = adminDb.collection("scheduledArticles").doc(docId);
   try {
     return await adminDb.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
-      if (!snap.exists) return false; // already claimed by another runner
+      if (!snap.exists) return false;
       tx.delete(ref);
       return true;
     });
@@ -256,12 +227,24 @@ export async function tryClaimScheduledEntry(
   }
 }
 
-export async function getScheduledArticlesDueIndexed(): Promise<ScheduledIndex[]> {
+export async function getScheduledArticlesDueIndexed(): Promise<
+  ScheduledIndex[]
+> {
   const now = new Date().toISOString();
   const snap = await adminDb
     .collection("scheduledArticles")
     .where("scheduledAt", "<=", now)
     .get();
-  return snap.docs.map((d) => d.data() as ScheduledIndex);
+  return snap.docs.map((d) => {
+    const data = d.data() as Partial<ScheduledIndex>;
+    return {
+      userId: data.userId || "",
+      // Backwards-compat: legacy docs may not have siteId yet. Migration
+      // will rewrite them. Fallback to empty string — the cron will skip
+      // entries with no siteId to avoid publishing into the wrong site.
+      siteId: (data as any).siteId || "",
+      articleId: data.articleId || "",
+      scheduledAt: data.scheduledAt || now,
+    };
+  });
 }
-

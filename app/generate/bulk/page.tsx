@@ -26,8 +26,10 @@ import { toast } from "react-hot-toast";
 import { useAuth } from "../../../contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { getUserApiKeys } from "../../../lib/services/userKeys";
+import { getWpCredentials } from "../../../lib/services/wpCredentials";
 import { CTA } from "../../../types/blog";
 import CTAModal from "../../../components/CTAModal";
+import { useSite } from "../../../contexts/SiteContext";
 
 // GPT-5.5 and above use a different effort scale (no "minimal", adds "xhigh")
 function isGpt55Plus(model: string): boolean {
@@ -112,6 +114,7 @@ const RETRY_DELAYS_MS = [3000, 10000, 30000];
 
 export default function BulkGeneratePage() {
   const { user, loading: authLoading } = useAuth();
+  const { activeSiteId, activeSite } = useSite();
   const router = useRouter();
   const [topics, setTopics] = useState<BulkTopic[]>([]);
   const [newTopic, setNewTopic] = useState("");
@@ -207,7 +210,11 @@ export default function BulkGeneratePage() {
   }, [user, authLoading, router]);
 
   // Persist topics in localStorage so accidental refresh doesn't wipe the queue
-  const storageKey = user ? `bulkQueue.${user.uid}` : null;
+  // Scoped per-site so switching sites doesn't leak queue state across sites.
+  const storageKey =
+    user && activeSiteId
+      ? `bulkQueue.${user.uid}.${activeSiteId}`
+      : null;
 
   useEffect(() => {
     if (!storageKey) return;
@@ -324,6 +331,7 @@ export default function BulkGeneratePage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({
           topic: topicItem.topic,
@@ -386,6 +394,7 @@ export default function BulkGeneratePage() {
                   headers: {
                     "Content-Type": "application/json",
                     Authorization: `Bearer ${idToken}`,
+                    ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
                   },
                   body: JSON.stringify({
                     title: data.payload.seoMetadata?.metaTitle || topicItem.topic,
@@ -410,6 +419,9 @@ export default function BulkGeneratePage() {
                         headers: {
                           "Content-Type": "application/json",
                           Authorization: `Bearer ${idToken}`,
+                          ...(activeSiteId
+                            ? { "x-site-id": activeSiteId }
+                            : {}),
                         },
                         body: JSON.stringify({ scheduledAt }),
                       });
@@ -488,13 +500,21 @@ export default function BulkGeneratePage() {
       if (!userKeys?.unsplashKey && config.numberOfImages > 0) {
         missing.push("Unsplash API Key");
       }
-      if (
-        config.publishToWordPress &&
-        (!userKeys?.wordpressUrl ||
-          !userKeys?.wordpressUsername ||
-          !userKeys?.wordpressPassword)
-      ) {
-        missing.push("WordPress credentials");
+      if (config.publishToWordPress) {
+        if (!activeSiteId) {
+          missing.push("Active site (select a site first)");
+        } else {
+          const wp = await getWpCredentials(user.uid, activeSiteId);
+          if (
+            !wp?.wordpressUrl ||
+            !wp?.wordpressUsername ||
+            !wp?.wordpressPassword
+          ) {
+            missing.push(
+              `WordPress credentials for site "${activeSite?.name || "active"}"`
+            );
+          }
+        }
       }
       if (
         config.aiProvider === "deepseek" &&
@@ -593,6 +613,7 @@ export default function BulkGeneratePage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({
           count: ideasCount,
@@ -1439,6 +1460,7 @@ export default function BulkGeneratePage() {
           existingCTA={editingCTA}
           maxPosition={6}
           userId={user.uid}
+          siteId={activeSiteId || undefined}
         />
       )}
 

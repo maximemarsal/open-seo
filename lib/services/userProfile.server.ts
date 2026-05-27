@@ -14,13 +14,20 @@ if (getApps().length === 0) {
 
 const adminDb = getFirestore();
 
-const profileRef = (userId: string) =>
-  adminDb.collection("users").doc(userId).collection("private").doc("profile");
+const profileRef = (userId: string, siteId: string) =>
+  adminDb
+    .collection("users")
+    .doc(userId)
+    .collection("sites")
+    .doc(siteId)
+    .collection("private")
+    .doc("profile");
 
 export async function getUserProfileServer(
-  userId: string
+  userId: string,
+  siteId: string
 ): Promise<UserProfile | null> {
-  const snap = await profileRef(userId).get();
+  const snap = await profileRef(userId, siteId).get();
   if (!snap.exists) return null;
   const data = snap.data() || {};
   const { updatedAt, ...rest } = data;
@@ -29,9 +36,10 @@ export async function getUserProfileServer(
 
 export async function saveUserProfileServer(
   userId: string,
+  siteId: string,
   partial: Partial<UserProfile>
 ): Promise<void> {
-  await profileRef(userId).set(
+  await profileRef(userId, siteId).set(
     { ...partial, updatedAt: new Date().toISOString() },
     { merge: true }
   );
@@ -39,11 +47,12 @@ export async function saveUserProfileServer(
 
 export async function setKnownTitles(
   userId: string,
+  siteId: string,
   titles: string[]
 ): Promise<{ count: number; lastWpSyncAt: string }> {
   const deduped = dedupeTitles(titles);
   const lastWpSyncAt = new Date().toISOString();
-  await profileRef(userId).set(
+  await profileRef(userId, siteId).set(
     {
       knownArticleTitles: deduped,
       lastWpSyncAt,

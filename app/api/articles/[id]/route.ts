@@ -1,10 +1,44 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyIdToken, getTokenFromHeader } from "../../../../lib/auth-server";
+import {
+  verifyIdToken,
+  getTokenFromHeader,
+  resolveSiteId,
+} from "../../../../lib/auth-server";
+import { ensureUserMigrated } from "../../../../lib/services/migration.server";
 import {
   getArticleById,
   updateArticle,
   deleteArticle,
 } from "../../../../lib/services/articles.server";
+
+async function authAndSite(
+  request: NextRequest
+): Promise<{ userId: string; siteId: string } | NextResponse> {
+  const idToken = getTokenFromHeader(request.headers.get("authorization"));
+  if (!idToken) {
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401 }
+    );
+  }
+  const userId = await verifyIdToken(idToken);
+  if (!userId) {
+    return NextResponse.json(
+      { error: "Invalid authentication token" },
+      { status: 401 }
+    );
+  }
+  await ensureUserMigrated(userId);
+  try {
+    const siteId = await resolveSiteId(request, userId);
+    return { userId, siteId };
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message || "No site available" },
+      { status: 400 }
+    );
+  }
+}
 
 // GET - Fetch a single article
 export async function GET(
@@ -12,28 +46,14 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authHeader = request.headers.get("authorization");
-    const idToken = getTokenFromHeader(authHeader);
-    if (!idToken) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
-    }
+    const auth = await authAndSite(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId, siteId } = auth;
 
-    const userId = await verifyIdToken(idToken);
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Invalid authentication token" },
-        { status: 401 }
-      );
-    }
-
-    const article = await getArticleById(userId, params.id);
+    const article = await getArticleById(userId, siteId, params.id);
     if (!article) {
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
-
     return NextResponse.json({ article });
   } catch (error) {
     console.error("Error fetching article:", error);
@@ -50,29 +70,15 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authHeader = request.headers.get("authorization");
-    const idToken = getTokenFromHeader(authHeader);
-    if (!idToken) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
-    }
-
-    const userId = await verifyIdToken(idToken);
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Invalid authentication token" },
-        { status: 401 }
-      );
-    }
+    const auth = await authAndSite(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId, siteId } = auth;
 
     const body = await request.json();
-    const article = await updateArticle(userId, params.id, body);
+    const article = await updateArticle(userId, siteId, params.id, body);
     if (!article) {
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
-
     return NextResponse.json({ article });
   } catch (error) {
     console.error("Error updating article:", error);
@@ -89,28 +95,14 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authHeader = request.headers.get("authorization");
-    const idToken = getTokenFromHeader(authHeader);
-    if (!idToken) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
-    }
+    const auth = await authAndSite(request);
+    if (auth instanceof NextResponse) return auth;
+    const { userId, siteId } = auth;
 
-    const userId = await verifyIdToken(idToken);
-    if (!userId) {
-      return NextResponse.json(
-        { error: "Invalid authentication token" },
-        { status: 401 }
-      );
-    }
-
-    const deleted = await deleteArticle(userId, params.id);
+    const deleted = await deleteArticle(userId, siteId, params.id);
     if (!deleted) {
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
-
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error deleting article:", error);
@@ -120,4 +112,3 @@ export async function DELETE(
     );
   }
 }
-
