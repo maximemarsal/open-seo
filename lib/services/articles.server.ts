@@ -225,6 +225,37 @@ async function removeScheduledIndex(userId: string, articleId: string) {
   await adminDb.collection("scheduledArticles").doc(docId).delete();
 }
 
+/**
+ * Atomically claim a scheduled article for publishing.
+ *
+ * Reads + deletes the scheduledArticles/{userId__articleId} doc in a single
+ * Firestore transaction. Returns true only if THIS caller won the race.
+ *
+ * This prevents the cron from publishing the same article multiple times when:
+ *  - Vercel runs overlapping cron invocations (function takes > schedule interval)
+ *  - A previous cron run created the WP post but timed out before
+ *    markArticlePublished could remove the index
+ *  - External + Vercel cron both ping the endpoint
+ */
+export async function tryClaimScheduledEntry(
+  userId: string,
+  articleId: string
+): Promise<boolean> {
+  const docId = `${userId}__${articleId}`;
+  const ref = adminDb.collection("scheduledArticles").doc(docId);
+  try {
+    return await adminDb.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return false; // already claimed by another runner
+      tx.delete(ref);
+      return true;
+    });
+  } catch (err) {
+    console.error("tryClaimScheduledEntry transaction failed:", err);
+    return false;
+  }
+}
+
 export async function getScheduledArticlesDueIndexed(): Promise<ScheduledIndex[]> {
   const now = new Date().toISOString();
   const snap = await adminDb

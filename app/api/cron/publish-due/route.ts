@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getScheduledArticlesDueIndexed, getArticleById, markArticlePublished } from "../../../../lib/services/articles.server";
+import {
+  getScheduledArticlesDueIndexed,
+  getArticleById,
+  markArticlePublished,
+  tryClaimScheduledEntry,
+  updateArticle,
+} from "../../../../lib/services/articles.server";
 import { getUserApiKeysServer } from "../../../../lib/services/userKeys.server";
 import { WordPressService } from "../../../../lib/services/wordpress";
 
@@ -33,20 +39,37 @@ async function executeCronJob() {
     }> = [];
 
     for (const entry of dueArticles) {
+      const userId = entry.userId;
+      const articleId = entry.articleId;
+
+      if (!userId) {
+        results.push({
+          articleId,
+          userId: "unknown",
+          status: "skipped",
+          reason: "Missing userId on article",
+        });
+        continue;
+      }
+
+      // ATOMIC CLAIM: read + delete the scheduledArticles entry in one
+      // transaction. If another concurrent cron already claimed it, skip.
+      // This prevents duplicate WP posts when:
+      //   - Vercel runs overlapping invocations
+      //   - A previous run created the WP post but timed out before clearing
+      //   - External cron + Vercel cron both fire at the same time
+      const claimed = await tryClaimScheduledEntry(userId, articleId);
+      if (!claimed) {
+        results.push({
+          articleId,
+          userId,
+          status: "skipped",
+          reason: "Already claimed by another cron run",
+        });
+        continue;
+      }
+
       try {
-        const userId = entry.userId;
-        const articleId = entry.articleId;
-
-        if (!userId) {
-          results.push({
-            articleId,
-            userId: "unknown",
-            status: "skipped",
-            reason: "Missing userId on article",
-          });
-          continue;
-        }
-
         // Fetch full article data
         const article = await getArticleById(userId, articleId);
         if (!article) {
@@ -59,11 +82,24 @@ async function executeCronJob() {
           continue;
         }
 
+        // Safety net: if status is already "published", don't re-publish
+        if (article.status === "published") {
+          results.push({
+            articleId,
+            userId,
+            status: "skipped",
+            reason: "Article already marked as published",
+          });
+          continue;
+        }
+
         const userKeys = await getUserApiKeysServer(userId);
         const wordpressCredentials = {
           url: userKeys?.wordpressUrl || process.env.WORDPRESS_URL || "",
-          username: userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
-          password: userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
+          username:
+            userKeys?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
+          password:
+            userKeys?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
         };
 
         if (
@@ -71,6 +107,11 @@ async function executeCronJob() {
           !wordpressCredentials.username ||
           !wordpressCredentials.password
         ) {
+          // Demote article to draft so user can fix and reschedule manually
+          await updateArticle(userId, articleId, {
+            status: "draft",
+            scheduledAt: null,
+          });
           results.push({
             articleId,
             userId,
@@ -106,9 +147,24 @@ async function executeCronJob() {
           status: "published",
         });
       } catch (error: any) {
+        // The article was claimed (removed from index) but publishing failed.
+        // We do NOT re-add it to the index — that's what caused 5x duplicates.
+        // Instead, demote to draft so the user knows it failed and can use
+        // the "Republish" button to retry manually after fixing the issue.
+        try {
+          await updateArticle(userId, articleId, {
+            status: "draft",
+            scheduledAt: null,
+          });
+        } catch (revertErr) {
+          console.error(
+            "Failed to revert article after publish failure:",
+            revertErr
+          );
+        }
         results.push({
-          articleId: entry.articleId,
-          userId: entry.userId || "unknown",
+          articleId,
+          userId,
           status: "failed",
           reason: error?.message || "Unknown error",
         });
