@@ -91,11 +91,13 @@ export class BlogApiService {
       return { success: false, message: "Blog API URL is missing." };
     }
     try {
-      // GET a single post requires auth (all statuses). A random slug that
-      // can't exist tells the key apart from the URL: 404 = authenticated key,
-      // 401 = bad key, 200 = authenticated (and the slug happened to exist).
-      const resp = await this.api.get(
-        `/posts/__openseo_healthcheck__${Date.now()}`,
+      // Validate the write key without creating anything: POST an intentionally
+      // invalid payload. Auth runs before payload validation, so a valid key
+      // yields 400 (payload rejected) and an invalid key yields 401. Nothing is
+      // created because `title`/`content` are required.
+      const resp = await this.api.post(
+        "/posts",
+        {},
         { validateStatus: () => true }
       );
       if (resp.status === 401) {
@@ -104,12 +106,28 @@ export class BlogApiService {
           message: "Authentication failed: invalid API key.",
         };
       }
-      if (resp.status === 404 || resp.status === 200) {
+      // 400 = key accepted (payload rejected, as expected). 2xx would mean it
+      // somehow created a post — still proves the key works.
+      if (resp.status === 400 || (resp.status >= 200 && resp.status < 300)) {
         return { success: true, message: "Connection successful!" };
+      }
+      if (resp.status === 404) {
+        return {
+          success: false,
+          message:
+            "Endpoint not found (404). Check the Blog API URL — it should end with /api/blog.",
+        };
+      }
+      if (resp.status === 502) {
+        return {
+          success: false,
+          message:
+            "Blog API database error (502). The destination server's database/Supabase config may be wrong.",
+        };
       }
       return {
         success: false,
-        message: `Unexpected response from Blog API (HTTP ${resp.status}).`,
+        message: `Unexpected response from Blog API (HTTP ${resp.status}). The destination server may be down or misconfigured (e.g. missing BLOG_API_KEY / Supabase env).`,
       };
     } catch (error: any) {
       return { success: false, message: this.describeError(error, "connect") };
