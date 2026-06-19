@@ -53,8 +53,10 @@ export async function createSite(
     name: name.trim() || "Untitled",
     createdAt: new Date().toISOString(),
     isDefault: !!opts?.isDefault,
-    color: opts?.color,
+    publishTarget: "wordpress",
   };
+  // Firestore rejects `undefined` field values — only set color when provided.
+  if (opts?.color) site.color = opts.color;
   await setDoc(ref, site);
   return site;
 }

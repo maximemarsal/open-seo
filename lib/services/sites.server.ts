@@ -64,8 +64,11 @@ export async function createSiteServer(
     name: (name || "").trim() || "Untitled",
     createdAt: new Date().toISOString(),
     isDefault: !!opts?.isDefault,
-    color: opts?.color,
+    publishTarget: "wordpress",
   };
+  // Firestore (admin SDK) rejects `undefined` field values — only set color
+  // when one was actually provided.
+  if (opts?.color) site.color = opts.color;
   await ref.set(site);
   return site;
 }
