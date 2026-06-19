@@ -27,6 +27,7 @@ import { useAuth } from "../../../contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { getUserApiKeys } from "../../../lib/services/userKeys";
 import { getWpCredentials } from "../../../lib/services/wpCredentials";
+import { getBlogApiCredentials } from "../../../lib/services/blogApiCredentials";
 import { CTA } from "../../../types/blog";
 import CTAModal from "../../../components/CTAModal";
 import { useSite } from "../../../contexts/SiteContext";
@@ -503,6 +504,13 @@ export default function BulkGeneratePage() {
       if (config.publishToWordPress) {
         if (!activeSiteId) {
           missing.push("Active site (select a site first)");
+        } else if (activeSite?.publishTarget === "blog-api") {
+          const blog = await getBlogApiCredentials(user.uid, activeSiteId);
+          if (!blog?.blogApiUrl || !blog?.blogApiKey) {
+            missing.push(
+              `Blog API credentials for site "${activeSite?.name || "active"}"`
+            );
+          }
         } else {
           const wp = await getWpCredentials(user.uid, activeSiteId);
           if (

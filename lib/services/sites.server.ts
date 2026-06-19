@@ -31,6 +31,7 @@ export async function listSitesServer(userId: string): Promise<Site[]> {
       isDefault: !!data.isDefault,
       createdAt: data.createdAt || new Date().toISOString(),
       color: data.color,
+      publishTarget: data.publishTarget || "wordpress",
     } as Site;
   });
 }
@@ -48,6 +49,7 @@ export async function getSiteServer(
     isDefault: !!data.isDefault,
     createdAt: data.createdAt || new Date().toISOString(),
     color: data.color,
+    publishTarget: data.publishTarget || "wordpress",
   };
 }
 

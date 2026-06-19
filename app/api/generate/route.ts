@@ -4,7 +4,7 @@ import { ResearchService } from "../../../lib/services/research";
 import { OutlineService } from "../../../lib/services/outline";
 import { WriterService } from "../../../lib/services/writer";
 import { SEOService } from "../../../lib/services/seo";
-import { WordPressService } from "../../../lib/services/wordpress";
+import { getSitePublishContext } from "../../../lib/services/publish.server";
 import {
   GenerationProgress,
   BlogContent,
@@ -247,15 +247,15 @@ export async function POST(request: NextRequest) {
       missingKeys.push("Perplexity (for web research)");
     }
 
-    // Check WordPress if publishing is enabled
-    if (publishToWordPress) {
-      if (
-        !effectiveKeys.wordpress.url ||
-        !effectiveKeys.wordpress.username ||
-        !effectiveKeys.wordpress.password
-      ) {
-        missingKeys.push("WordPress credentials");
-      }
+    // Check publishing target if publishing is enabled (WordPress or Blog API
+    // depending on the active site's configured target).
+    const publishCtx = publishToWordPress
+      ? await getSitePublishContext(userId, siteId)
+      : null;
+    if (publishToWordPress && !publishCtx?.configured) {
+      missingKeys.push(
+        publishCtx?.notConfiguredMessage || "Publishing credentials"
+      );
     }
 
     // Check Unsplash if images are requested
@@ -405,9 +405,6 @@ export async function POST(request: NextRequest) {
             verbosity: gpt5Verbosity,
             provider: aiProvider,
           });
-          const wordpressService = publishToWordPress
-            ? new WordPressService()
-            : null;
 
           // Step 1: Research (optional)
           let researchData: any = {
@@ -560,34 +557,30 @@ export async function POST(request: NextRequest) {
             contentWithImages = { ...contentWithImages, html: htmlWithCTAs };
           }
 
-          // Step 5: Create WordPress draft (if enabled)
-          let wordpressResult: { postId: number; editUrl: string } | null =
-            null;
-          if (publishToWordPress && wordpressService) {
+          // Step 5: Publish to the site's target (WordPress or Blog API) if enabled
+          let publishResult: {
+            target: "wordpress" | "blog-api";
+            postId?: number;
+            editUrl?: string;
+            slug?: string;
+            url?: string;
+          } | null = null;
+          if (publishToWordPress && publishCtx) {
             sendProgress({
               step: "wordpress",
-              message: "Publishing to WordPress...",
+              message:
+                publishCtx.target === "blog-api"
+                  ? "Publishing to Blog API..."
+                  : "Publishing to WordPress...",
               progress: 90,
             });
 
-            wordpressResult = await wordpressService.createDraftPost(
+            publishResult = await publishCtx.publish(
               contentWithImages,
               seoMetadata,
-              topic
+              topic,
+              images && images.length > 0 ? images[0].url : undefined
             );
-
-            // Set featured image if we have images
-            if (wordpressResult && images && images.length > 0) {
-              try {
-                await wordpressService.setFeaturedImageFromUrl(
-                  wordpressResult.postId,
-                  images[0].url,
-                  images[0].alt || seoMetadata.metaTitle
-                );
-              } catch (e) {
-                console.warn("Could not set featured image:", e);
-              }
-            }
           } else {
             sendProgress({
               step: "completed",
@@ -600,7 +593,7 @@ export async function POST(request: NextRequest) {
           sendProgress({
             step: "completed",
             message: publishToWordPress
-              ? "Article generated and posted to WordPress!"
+              ? "Article generated and published!"
               : "Article generated successfully!",
             progress: 100,
           });
@@ -623,10 +616,13 @@ export async function POST(request: NextRequest) {
 
           // Send final result
           sendComplete({
-            ...(wordpressResult
+            ...(publishResult
               ? {
-                  postId: wordpressResult.postId,
-                  editUrl: wordpressResult.editUrl,
+                  target: publishResult.target,
+                  postId: publishResult.postId,
+                  editUrl: publishResult.editUrl,
+                  slug: publishResult.slug,
+                  url: publishResult.url,
                 }
               : {}),
             seoScore: seoAnalysis.score,

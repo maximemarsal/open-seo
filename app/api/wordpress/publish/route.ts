@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { WordPressService } from "@/lib/services/wordpress";
 import {
   verifyIdToken,
   getTokenFromHeader,
   resolveSiteId,
 } from "@/lib/auth-server";
 import { ensureUserMigrated } from "@/lib/services/migration.server";
-import { getWpCredentialsServer } from "@/lib/services/wpCredentials.server";
+import { getSitePublishContext } from "@/lib/services/publish.server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,51 +47,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const wpCreds = await getWpCredentialsServer(userId, siteId);
-    const wordpressCredentials = {
-      url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL || "",
-      username:
-        wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
-      password:
-        wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
-    };
+    const ctx = await getSitePublishContext(userId, siteId);
 
-    if (
-      !wordpressCredentials.url ||
-      !wordpressCredentials.username ||
-      !wordpressCredentials.password
-    ) {
+    if (!ctx.configured) {
       return NextResponse.json(
-        {
-          error: "WordPress is not configured for this site",
-          hint: "Add your WordPress URL, username and application password in Settings for the active site.",
-        },
+        { error: ctx.notConfiguredMessage || "Publishing is not configured" },
         { status: 400 }
       );
     }
 
-    const wordpressService = new WordPressService(wordpressCredentials);
-
     // Test connection first
-    const connection = await wordpressService.testConnection();
+    const connection = await ctx.testConnection();
     if (!connection.success) {
-      return NextResponse.json(
-        {
-          error: connection.message,
-          hint:
-            "Vérifiez l'identifiant WordPress et le mot de passe d'application (sans espaces superflus).",
-        },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: connection.message }, { status: 401 });
     }
 
-    // Create the post - use the correct structure expected by createDraftPost
     const blogContent = {
       html: content,
-      sections: [],
-      images: [],
       wordCount: content.split(/\s+/).length,
-      sources: [],
     };
 
     const seoMetadata = {
@@ -102,25 +74,24 @@ export async function POST(request: NextRequest) {
       keywords: tags || [],
     };
 
-    const result = await wordpressService.createDraftPost(
-      blogContent,
-      seoMetadata,
-      title
-    );
+    const result = await ctx.publish(blogContent, seoMetadata, title);
 
     return NextResponse.json({
       success: true,
+      target: result.target,
+      // WordPress-shaped fields (kept for backward compatibility with the UI)
       postId: result.postId,
       editUrl: result.editUrl,
+      // Blog API fields
+      slug: result.slug,
+      url: result.url,
     });
   } catch (error) {
-    console.error("Error publishing to WordPress:", error);
+    console.error("Error publishing article:", error);
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Failed to publish to WordPress",
+          error instanceof Error ? error.message : "Failed to publish article",
       },
       { status: 500 }
     );

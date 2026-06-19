@@ -9,6 +9,7 @@ import {
   orderBy,
   query,
 } from "firebase/firestore";
+import { PublishTarget } from "../../types/blog";
 
 export interface Site {
   id: string;
@@ -16,6 +17,8 @@ export interface Site {
   isDefault?: boolean;
   createdAt: string;
   color?: string;
+  // Where this site publishes its articles. Defaults to "wordpress".
+  publishTarget?: PublishTarget;
 }
 
 const sitesCol = (userId: string) => collection(db, "users", userId, "sites");
@@ -34,6 +37,7 @@ export async function listSites(userId: string): Promise<Site[]> {
       isDefault: !!data.isDefault,
       createdAt: data.createdAt || new Date().toISOString(),
       color: data.color,
+      publishTarget: (data.publishTarget as PublishTarget) || "wordpress",
     } as Site;
   });
 }
@@ -90,4 +94,12 @@ export async function setActiveSiteId(
     },
     { merge: true }
   );
+}
+
+export async function setSitePublishTarget(
+  userId: string,
+  siteId: string,
+  publishTarget: PublishTarget
+): Promise<void> {
+  await setDoc(siteDoc(userId, siteId), { publishTarget }, { merge: true });
 }

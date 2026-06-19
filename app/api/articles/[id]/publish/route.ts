@@ -5,12 +5,12 @@ import {
   resolveSiteId,
 } from "../../../../../lib/auth-server";
 import { ensureUserMigrated } from "../../../../../lib/services/migration.server";
-import { getWpCredentialsServer } from "../../../../../lib/services/wpCredentials.server";
+import { getArticleById } from "../../../../../lib/services/articles.server";
 import {
-  getArticleById,
-  markArticlePublished,
-} from "../../../../../lib/services/articles.server";
-import { WordPressService } from "../../../../../lib/services/wordpress";
+  publishArticleToSite,
+  PublishConfigError,
+  PublishAuthError,
+} from "../../../../../lib/services/publish.server";
 
 // POST - Publish an article to WordPress immediately or at scheduled time
 export async function POST(
@@ -35,79 +35,39 @@ export async function POST(
     await ensureUserMigrated(userId);
     const siteId = await resolveSiteId(request, userId);
 
-    // Get this site's WordPress credentials
-    const wpCreds = await getWpCredentialsServer(userId, siteId);
-    const wordpressCredentials = {
-      url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL || "",
-      username:
-        wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
-      password:
-        wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
-    };
-
-    if (
-      !wordpressCredentials.url ||
-      !wordpressCredentials.username ||
-      !wordpressCredentials.password
-    ) {
-      return NextResponse.json(
-        {
-          error: "WordPress is not configured for this site",
-          hint: "Add your WordPress credentials in Settings for the active site.",
-        },
-        { status: 400 }
-      );
-    }
-
     // Get the article (from the active site)
     const article = await getArticleById(userId, siteId, params.id);
     if (!article) {
       return NextResponse.json({ error: "Article not found" }, { status: 404 });
     }
 
-    // Publish to WordPress
-    const wordpressService = new WordPressService(wordpressCredentials);
-
-    // Test connection first
-    const connection = await wordpressService.testConnection();
-    if (!connection.success) {
-      return NextResponse.json(
-        { error: connection.message },
-        { status: 401 }
-      );
-    }
-
-    // Create the post
-    const blogContent = {
-      html: article.content,
-      wordCount: article.wordCount,
-    };
-
-    const result = await wordpressService.createDraftPost(
-      blogContent,
-      article.seoMetadata,
-      article.title,
-      "publish"
-    );
-
-    // Mark as published in our database
-    const updatedArticle = await markArticlePublished(
+    // Publish to whatever target this site is configured for (WordPress or Blog API)
+    const { article: updatedArticle, result } = await publishArticleToSite(
       userId,
       siteId,
-      params.id,
-      result.postId,
-      result.editUrl
+      article
     );
 
     return NextResponse.json({
       success: true,
       article: updatedArticle,
-      wordpress: {
-        postId: result.postId,
-        editUrl: result.editUrl,
-      },
+      target: result.target,
+      wordpress:
+        result.target === "wordpress"
+          ? { postId: result.postId, editUrl: result.editUrl }
+          : undefined,
+      blogApi:
+        result.target === "blog-api"
+          ? { slug: result.slug, url: result.url }
+          : undefined,
     });
   } catch (error) {
+    if (error instanceof PublishConfigError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    if (error instanceof PublishAuthError) {
+      return NextResponse.json({ error: error.message }, { status: 401 });
+    }
     console.error("Error publishing article:", error);
     return NextResponse.json(
       {

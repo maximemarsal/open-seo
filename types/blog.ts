@@ -114,6 +114,9 @@ export interface CTA {
   };
 }
 
+// Where a site publishes its articles. Each site picks exactly one target.
+export type PublishTarget = "wordpress" | "blog-api";
+
 export interface SavedArticle {
   id: string;
   userId: string;
@@ -126,8 +129,12 @@ export interface SavedArticle {
   status: "draft" | "scheduled" | "published";
   scheduledAt?: string | null; // ISO date string
   publishedAt?: string; // ISO date string
+  // Set when published to a WordPress site
   wordpressPostId?: number;
   wordpressEditUrl?: string;
+  // Set when published to the Blog ingestion API
+  blogApiSlug?: string;
+  blogApiUrl?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -28,6 +28,12 @@ import {
   getWpCredentials,
   saveWpCredentials,
 } from "../../../lib/services/wpCredentials";
+import {
+  getBlogApiCredentials,
+  saveBlogApiCredentials,
+} from "../../../lib/services/blogApiCredentials";
+import { setSitePublishTarget } from "../../../lib/services/sites";
+import { PublishTarget } from "../../../types/blog";
 import { useSite } from "../../../contexts/SiteContext";
 import ApiKeyTooltip from "../../../components/ApiKeyTooltip";
 
@@ -43,11 +49,15 @@ interface ApiKeys {
   wordpressUrl: string;
   wordpressUsername: string;
   wordpressPassword: string;
+  blogApiUrl: string;
+  blogApiKey: string;
+  blogAuthorName: string;
+  blogAuthorAvatarUrl: string;
 }
 
 export default function SettingsPage() {
   const { user, loading: authLoading } = useAuth();
-  const { activeSiteId, activeSite } = useSite();
+  const { activeSiteId, activeSite, refresh: refreshSites } = useSite();
   const router = useRouter();
   const [showKeys, setShowKeys] = useState<{ [key: string]: boolean }>({});
   const [isSaving, setIsSaving] = useState(false);
@@ -55,6 +65,10 @@ export default function SettingsPage() {
   const [hasAiChanges, setHasAiChanges] = useState(false);
   const [hasOtherChanges, setHasOtherChanges] = useState(false);
   const [hasWordPressChanges, setHasWordPressChanges] = useState(false);
+  const [hasBlogApiChanges, setHasBlogApiChanges] = useState(false);
+  const [publishTarget, setPublishTarget] =
+    useState<PublishTarget>("wordpress");
+  const [isSavingTarget, setIsSavingTarget] = useState(false);
   const [apiKeys, setApiKeys] = useState<ApiKeys>({
     openaiKey: "",
     perplexityKey: "",
@@ -67,6 +81,10 @@ export default function SettingsPage() {
     wordpressUrl: "",
     wordpressUsername: "",
     wordpressPassword: "",
+    blogApiUrl: "",
+    blogApiKey: "",
+    blogAuthorName: "",
+    blogAuthorAvatarUrl: "",
   });
   const [originalKeys, setOriginalKeys] = useState<ApiKeys>({
     openaiKey: "",
@@ -80,6 +98,10 @@ export default function SettingsPage() {
     wordpressUrl: "",
     wordpressUsername: "",
     wordpressPassword: "",
+    blogApiUrl: "",
+    blogApiKey: "",
+    blogAuthorName: "",
+    blogAuthorAvatarUrl: "",
   });
 
   // Business context + WordPress sync state
@@ -107,10 +129,11 @@ export default function SettingsPage() {
 
       try {
         setIsLoading(true);
-        const [keys, profile, wp] = await Promise.all([
+        const [keys, profile, wp, blog] = await Promise.all([
           getUserApiKeys(user.uid),
           getUserProfile(user.uid, activeSiteId),
           getWpCredentials(user.uid, activeSiteId),
+          getBlogApiCredentials(user.uid, activeSiteId),
         ]);
         const loadedKeys = {
           openaiKey: keys?.openaiKey || "",
@@ -125,9 +148,15 @@ export default function SettingsPage() {
           wordpressUrl: wp?.wordpressUrl || "",
           wordpressUsername: wp?.wordpressUsername || "",
           wordpressPassword: wp?.wordpressPassword || "",
+          // Blog API credentials are per-site too
+          blogApiUrl: blog?.blogApiUrl || "",
+          blogApiKey: blog?.blogApiKey || "",
+          blogAuthorName: blog?.blogAuthorName || "",
+          blogAuthorAvatarUrl: blog?.blogAuthorAvatarUrl || "",
         };
         setApiKeys(loadedKeys);
         setOriginalKeys(loadedKeys);
+        setPublishTarget(activeSite?.publishTarget || "wordpress");
 
         if (profile) {
           setBusinessContext(profile.businessContext || "");
@@ -180,9 +209,17 @@ export default function SettingsPage() {
       apiKeys.wordpressUsername !== originalKeys.wordpressUsername ||
       apiKeys.wordpressPassword !== originalKeys.wordpressPassword;
 
+    // Blog API changes
+    const blogApiChanged =
+      apiKeys.blogApiUrl !== originalKeys.blogApiUrl ||
+      apiKeys.blogApiKey !== originalKeys.blogApiKey ||
+      apiKeys.blogAuthorName !== originalKeys.blogAuthorName ||
+      apiKeys.blogAuthorAvatarUrl !== originalKeys.blogAuthorAvatarUrl;
+
     setHasAiChanges(aiChanged);
     setHasOtherChanges(otherChanged);
     setHasWordPressChanges(wordpressChanged);
+    setHasBlogApiChanges(blogApiChanged);
   }, [apiKeys, originalKeys, isLoading]);
 
   const handleSave = async () => {
@@ -218,9 +255,17 @@ export default function SettingsPage() {
         }
       }
 
-      // Persist non-WP keys (shared across sites)
-      const { wordpressUrl, wordpressUsername, wordpressPassword, ...aiAndOther } =
-        apiKeys;
+      // Persist non-WP, non-Blog-API keys (shared across sites)
+      const {
+        wordpressUrl,
+        wordpressUsername,
+        wordpressPassword,
+        blogApiUrl,
+        blogApiKey,
+        blogAuthorName,
+        blogAuthorAvatarUrl,
+        ...aiAndOther
+      } = apiKeys;
       await saveUserApiKeys(user.uid, aiAndOther);
 
       // Persist WP credentials per-site
@@ -255,6 +300,78 @@ export default function SettingsPage() {
     } catch (error) {
       console.error("Error saving API keys:", error);
       toast.error("Failed to save settings");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleChangeTarget = async (target: PublishTarget) => {
+    if (target === publishTarget) return;
+    setPublishTarget(target); // optimistic
+    if (!user || !activeSiteId) return;
+    try {
+      setIsSavingTarget(true);
+      await setSitePublishTarget(user.uid, activeSiteId, target);
+      await refreshSites();
+      toast.success(
+        target === "blog-api"
+          ? "Destination set to Blog API for this site."
+          : "Destination set to WordPress for this site."
+      );
+    } catch (error) {
+      console.error("Error changing publish target:", error);
+      toast.error("Failed to change publishing destination");
+      setPublishTarget(activeSite?.publishTarget || "wordpress"); // revert
+    } finally {
+      setIsSavingTarget(false);
+    }
+  };
+
+  const handleSaveBlogApi = async () => {
+    if (!user || !activeSiteId) return;
+    try {
+      setIsSaving(true);
+
+      // Test the Blog API credentials if URL + key are present
+      if (apiKeys.blogApiUrl && apiKeys.blogApiKey) {
+        const testResponse = await fetch("/api/blog-api/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            blogApiUrl: apiKeys.blogApiUrl,
+            blogApiKey: apiKeys.blogApiKey,
+          }),
+        });
+        const testResult = await testResponse.json();
+        if (!testResult.success) {
+          toast.error(`Blog API Test Failed: ${testResult.message}`, {
+            duration: 6000,
+          });
+          setIsSaving(false);
+          return;
+        }
+        toast.success(`Blog API Connected: ${testResult.message}`, {
+          duration: 4000,
+        });
+      }
+
+      await saveBlogApiCredentials(user.uid, activeSiteId, {
+        blogApiUrl: apiKeys.blogApiUrl,
+        blogApiKey: apiKeys.blogApiKey,
+        blogAuthorName: apiKeys.blogAuthorName,
+        blogAuthorAvatarUrl: apiKeys.blogAuthorAvatarUrl,
+      });
+
+      setOriginalKeys(apiKeys);
+      setHasBlogApiChanges(false);
+      toast.success(
+        `Blog API settings saved${
+          activeSite?.name ? ` for site "${activeSite.name}"` : ""
+        }!`
+      );
+    } catch (error) {
+      console.error("Error saving Blog API settings:", error);
+      toast.error("Failed to save Blog API settings");
     } finally {
       setIsSaving(false);
     }
@@ -891,7 +1008,58 @@ export default function SettingsPage() {
           </AnimatePresence>
         </motion.div>
 
+        {/* Publishing destination selector (per-site) */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="bg-white rounded-3xl shadow-xl p-8 mb-8"
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+            <Globe className="w-6 h-6 text-gray-700" />
+            Publishing Destination
+          </h2>
+          <p className="text-gray-600 text-sm mb-6">
+            Choose where articles for the site
+            {activeSite?.name ? ` "${activeSite.name}"` : ""} are published. Each
+            site publishes to one destination.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {(
+              [
+                { key: "wordpress", label: "WordPress", desc: "Publish via the WordPress REST API." },
+                { key: "blog-api", label: "Blog API", desc: "Push to a custom blog ingestion API." },
+              ] as { key: PublishTarget; label: string; desc: string }[]
+            ).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                disabled={isSavingTarget}
+                onClick={() => handleChangeTarget(opt.key)}
+                className={`text-left p-5 rounded-2xl border-2 transition-all ${
+                  publishTarget === opt.key
+                    ? "border-gray-900 bg-gray-50"
+                    : "border-gray-200 hover:border-gray-300"
+                } ${isSavingTarget ? "opacity-60 cursor-not-allowed" : ""}`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-gray-900">
+                    {opt.label}
+                  </span>
+                  {publishTarget === opt.key && (
+                    <span className="text-xs font-medium text-white bg-gray-900 rounded-full px-2 py-0.5">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-gray-600 mt-1">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+
         {/* WordPress Section */}
+        {publishTarget === "wordpress" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1090,6 +1258,156 @@ export default function SettingsPage() {
             )}
           </AnimatePresence>
         </motion.div>
+        )}
+
+        {/* Blog API Section */}
+        {publishTarget === "blog-api" && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="bg-white rounded-3xl shadow-xl p-8 mb-8"
+          >
+            <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+              <Globe className="w-6 h-6 text-gray-700" />
+              Blog API Configuration
+            </h2>
+            <p className="text-gray-600 text-sm mb-6">
+              Push generated articles to a custom blog ingestion API (HTML
+              format).
+            </p>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Blog API URL
+                </label>
+                <input
+                  type="url"
+                  value={apiKeys.blogApiUrl}
+                  onChange={(e) =>
+                    setApiKeys({ ...apiKeys, blogApiUrl: e.target.value })
+                  }
+                  placeholder="https://yoursite.com/api/blog"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  Base URL of the ingestion API, e.g.
+                  https://jadoremaloc.com/api/blog
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  API Key
+                </label>
+                <div className="relative">
+                  <input
+                    type={showKeys["blogApi"] ? "text" : "password"}
+                    value={apiKeys.blogApiKey}
+                    onChange={(e) =>
+                      setApiKeys({ ...apiKeys, blogApiKey: e.target.value })
+                    }
+                    placeholder="Bearer token (BLOG_API_KEY)"
+                    className="w-full px-4 py-3 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleShowKey("blogApi")}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    {showKeys["blogApi"] ? (
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Sent as <code>Authorization: Bearer &lt;key&gt;</code> on every
+                  request.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Author name (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={apiKeys.blogAuthorName}
+                    onChange={(e) =>
+                      setApiKeys({ ...apiKeys, blogAuthorName: e.target.value })
+                    }
+                    placeholder="Jane Doe"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Author avatar URL (optional)
+                  </label>
+                  <input
+                    type="url"
+                    value={apiKeys.blogAuthorAvatarUrl}
+                    onChange={(e) =>
+                      setApiKeys({
+                        ...apiKeys,
+                        blogAuthorAvatarUrl: e.target.value,
+                      })
+                    }
+                    placeholder="https://.../avatar.jpg"
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <AnimatePresence>
+              {hasBlogApiChanges && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="mt-6 flex justify-end"
+                >
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleSaveBlogApi}
+                    disabled={isSaving}
+                    className={`px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all flex items-center gap-2 ${
+                      isSaving
+                        ? "bg-gray-400 cursor-not-allowed"
+                        : "bg-gradient-to-r from-gray-900 to-gray-700 text-white"
+                    }`}
+                  >
+                    {isSaving ? (
+                      <>
+                        <motion.div
+                          animate={{ rotate: 360 }}
+                          transition={{
+                            duration: 1,
+                            repeat: Infinity,
+                            ease: "linear",
+                          }}
+                          className="w-5 h-5 border-2 border-white border-t-transparent rounded-full"
+                        />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-5 h-5" />
+                        Save
+                      </>
+                    )}
+                  </motion.button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
       </div>
     </div>
   );

@@ -162,15 +162,26 @@ export async function markArticlePublished(
   userId: string,
   siteId: string,
   articleId: string,
-  wordpressPostId: number,
-  wordpressEditUrl: string
+  // Target-specific references: WordPress (postId/editUrl) or Blog API (slug/url).
+  refs: {
+    wordpressPostId?: number;
+    wordpressEditUrl?: string;
+    blogApiSlug?: string;
+    blogApiUrl?: string;
+  }
 ): Promise<SavedArticle | null> {
-  const updated = await updateArticle(userId, siteId, articleId, {
+  const patch: Partial<SavedArticle> = {
     status: "published",
     publishedAt: new Date().toISOString(),
-    wordpressPostId,
-    wordpressEditUrl,
-  });
+  };
+  if (refs.wordpressPostId !== undefined)
+    patch.wordpressPostId = refs.wordpressPostId;
+  if (refs.wordpressEditUrl !== undefined)
+    patch.wordpressEditUrl = refs.wordpressEditUrl;
+  if (refs.blogApiSlug !== undefined) patch.blogApiSlug = refs.blogApiSlug;
+  if (refs.blogApiUrl !== undefined) patch.blogApiUrl = refs.blogApiUrl;
+
+  const updated = await updateArticle(userId, siteId, articleId, patch);
   if (updated) {
     await removeScheduledIndex(userId, siteId, articleId);
   }

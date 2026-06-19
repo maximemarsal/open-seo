@@ -358,13 +358,17 @@ export default function ArticlesPage() {
                       </button>
                     )}
 
-                    {article.wordpressEditUrl && (
+                    {(article.wordpressEditUrl || article.blogApiUrl) && (
                       <a
-                        href={article.wordpressEditUrl}
+                        href={article.wordpressEditUrl || article.blogApiUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="p-2 hover:bg-green-50 rounded-lg transition-colors"
-                        title="Open in WordPress"
+                        title={
+                          article.wordpressEditUrl
+                            ? "Open in WordPress"
+                            : "View published article"
+                        }
                       >
                         <ExternalLink className="w-5 h-5 text-green-500" />
                       </a>
@@ -374,7 +378,7 @@ export default function ArticlesPage() {
                       <button
                         onClick={() => handleRepublish(article.id)}
                         className="p-2 hover:bg-orange-50 rounded-lg transition-colors"
-                        title="Republish to WordPress (if it's stuck or not visible)"
+                        title="Republish (if it's stuck or not visible)"
                       >
                         <RefreshCw className="w-5 h-5 text-orange-500" />
                       </button>

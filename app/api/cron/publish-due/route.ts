@@ -2,12 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getScheduledArticlesDueIndexed,
   getArticleById,
-  markArticlePublished,
   tryClaimScheduledEntry,
   updateArticle,
 } from "../../../../lib/services/articles.server";
-import { getWpCredentialsServer } from "../../../../lib/services/wpCredentials.server";
-import { WordPressService } from "../../../../lib/services/wordpress";
+import { publishArticleToSite } from "../../../../lib/services/publish.server";
 
 const CRON_SECRET = process.env.CRON_SECRET;
 
@@ -95,55 +93,10 @@ async function executeCronJob() {
         continue;
       }
 
-      // Get this site's WordPress credentials
-      const wpCreds = await getWpCredentialsServer(userId, siteId);
-      const wordpressCredentials = {
-        url: wpCreds?.wordpressUrl || process.env.WORDPRESS_URL || "",
-        username:
-          wpCreds?.wordpressUsername || process.env.WORDPRESS_USERNAME || "",
-        password:
-          wpCreds?.wordpressPassword || process.env.WORDPRESS_PASSWORD || "",
-      };
-
-      if (
-        !wordpressCredentials.url ||
-        !wordpressCredentials.username ||
-        !wordpressCredentials.password
-      ) {
-        await updateArticle(userId, siteId, articleId, {
-          status: "draft",
-          scheduledAt: null,
-        });
-        results.push({
-          articleId,
-          userId,
-          siteId,
-          status: "skipped",
-          reason: "Missing WordPress credentials for this site",
-        });
-        continue;
-      }
-
-      const wordpressService = new WordPressService(wordpressCredentials);
-      const blogContent = {
-        html: article.content,
-        wordCount: article.wordCount,
-      };
-
-      const wpResult = await wordpressService.createDraftPost(
-        blogContent,
-        article.seoMetadata,
-        article.title,
-        "publish"
-      );
-
-      await markArticlePublished(
-        userId,
-        siteId,
-        articleId,
-        wpResult.postId,
-        wpResult.editUrl
-      );
+      // Publish to whatever target this site is configured for (WordPress or
+      // Blog API). publishArticleToSite resolves the target, validates the
+      // credentials/connection, publishes, and marks the article published.
+      await publishArticleToSite(userId, siteId, article);
 
       results.push({
         articleId,

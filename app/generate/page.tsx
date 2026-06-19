@@ -30,6 +30,7 @@ import CTAModal from "../../components/CTAModal";
 import CTAPreview from "../../components/CTAPreview";
 import { getUserApiKeys } from "../../lib/services/userKeys";
 import { getWpCredentials } from "../../lib/services/wpCredentials";
+import { getBlogApiCredentials } from "../../lib/services/blogApiCredentials";
 import { useSite } from "../../contexts/SiteContext";
 
 // Scope last-generation-config per user+site so switching sites doesn't leak
@@ -424,21 +425,35 @@ export default function GeneratePage() {
         });
       }
 
-      // Check WordPress credentials per active site if user wants to publish
+      // Check publishing credentials per active site if user wants to publish.
+      // Each site targets either WordPress or the Blog API.
       if (publishToWordPress && activeSiteId) {
-        const wp = await getWpCredentials(user.uid, activeSiteId);
-        if (
-          !wp?.wordpressUrl ||
-          !wp?.wordpressUsername ||
-          !wp?.wordpressPassword
-        ) {
-          missing.push({
-            key: "wordpressUrl",
-            label: `WordPress credentials for site "${
-              activeSite?.name || "active"
-            }"`,
-            placeholder: "Configure in Settings",
-          });
+        if (activeSite?.publishTarget === "blog-api") {
+          const blog = await getBlogApiCredentials(user.uid, activeSiteId);
+          if (!blog?.blogApiUrl || !blog?.blogApiKey) {
+            missing.push({
+              key: "blogApiUrl",
+              label: `Blog API credentials for site "${
+                activeSite?.name || "active"
+              }"`,
+              placeholder: "Configure in Settings",
+            });
+          }
+        } else {
+          const wp = await getWpCredentials(user.uid, activeSiteId);
+          if (
+            !wp?.wordpressUrl ||
+            !wp?.wordpressUsername ||
+            !wp?.wordpressPassword
+          ) {
+            missing.push({
+              key: "wordpressUrl",
+              label: `WordPress credentials for site "${
+                activeSite?.name || "active"
+              }"`,
+              placeholder: "Configure in Settings",
+            });
+          }
         }
       }
 
