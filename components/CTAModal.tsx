@@ -672,6 +672,24 @@ export default function CTAModal({
                       onChange={handleImageUpload}
                       className="hidden"
                     />
+                    {/* Or paste a public image URL (preferred — avoids heavy
+                        base64 that some publishing targets reject). */}
+                    <input
+                      type="url"
+                      value={imageUrl.startsWith("data:") ? "" : imageUrl}
+                      onChange={(e) => {
+                        setImageUrl(e.target.value.trim());
+                        setImageFile(null);
+                      }}
+                      placeholder="Ou colle une URL d'image (https://.../logo.png)"
+                      className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-400/50 text-gray-900 text-sm"
+                    />
+                    {imageUrl.startsWith("data:") && (
+                      <p className="text-xs text-amber-600">
+                        Image uploadée (base64). Pour l'API Blog, préfère une URL
+                        publique.
+                      </p>
+                    )}
                   </div>
                 </div>
 

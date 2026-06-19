@@ -8,6 +8,9 @@ export interface BlogApiCredentials {
   // Optional default author applied to every pushed article
   blogAuthorName?: string;
   blogAuthorAvatarUrl?: string;
+  // Public image URL used to replace inline base64 (e.g. uploaded CTA images),
+  // which the ingestion API can't host. Empty = base64 images are removed.
+  blogFallbackImageUrl?: string;
 }
 
 const blogDoc = (userId: string, siteId: string) =>

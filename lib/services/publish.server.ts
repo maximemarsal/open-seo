@@ -65,6 +65,7 @@ export async function getSitePublishContext(
       apiKey,
       authorName: creds?.blogAuthorName,
       authorAvatarUrl: creds?.blogAuthorAvatarUrl,
+      fallbackImageUrl: creds?.blogFallbackImageUrl,
     });
     return {
       target,

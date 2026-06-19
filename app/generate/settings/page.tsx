@@ -53,6 +53,7 @@ interface ApiKeys {
   blogApiKey: string;
   blogAuthorName: string;
   blogAuthorAvatarUrl: string;
+  blogFallbackImageUrl: string;
 }
 
 export default function SettingsPage() {
@@ -85,6 +86,7 @@ export default function SettingsPage() {
     blogApiKey: "",
     blogAuthorName: "",
     blogAuthorAvatarUrl: "",
+    blogFallbackImageUrl: "",
   });
   const [originalKeys, setOriginalKeys] = useState<ApiKeys>({
     openaiKey: "",
@@ -102,6 +104,7 @@ export default function SettingsPage() {
     blogApiKey: "",
     blogAuthorName: "",
     blogAuthorAvatarUrl: "",
+    blogFallbackImageUrl: "",
   });
 
   // Business context + WordPress sync state
@@ -153,6 +156,7 @@ export default function SettingsPage() {
           blogApiKey: blog?.blogApiKey || "",
           blogAuthorName: blog?.blogAuthorName || "",
           blogAuthorAvatarUrl: blog?.blogAuthorAvatarUrl || "",
+          blogFallbackImageUrl: blog?.blogFallbackImageUrl || "",
         };
         setApiKeys(loadedKeys);
         setOriginalKeys(loadedKeys);
@@ -214,7 +218,8 @@ export default function SettingsPage() {
       apiKeys.blogApiUrl !== originalKeys.blogApiUrl ||
       apiKeys.blogApiKey !== originalKeys.blogApiKey ||
       apiKeys.blogAuthorName !== originalKeys.blogAuthorName ||
-      apiKeys.blogAuthorAvatarUrl !== originalKeys.blogAuthorAvatarUrl;
+      apiKeys.blogAuthorAvatarUrl !== originalKeys.blogAuthorAvatarUrl ||
+      apiKeys.blogFallbackImageUrl !== originalKeys.blogFallbackImageUrl;
 
     setHasAiChanges(aiChanged);
     setHasOtherChanges(otherChanged);
@@ -360,6 +365,7 @@ export default function SettingsPage() {
         blogApiKey: apiKeys.blogApiKey,
         blogAuthorName: apiKeys.blogAuthorName,
         blogAuthorAvatarUrl: apiKeys.blogAuthorAvatarUrl,
+        blogFallbackImageUrl: apiKeys.blogFallbackImageUrl,
       });
 
       setOriginalKeys(apiKeys);
@@ -1361,6 +1367,29 @@ export default function SettingsPage() {
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  CTA fallback image URL (optional)
+                </label>
+                <input
+                  type="url"
+                  value={apiKeys.blogFallbackImageUrl}
+                  onChange={(e) =>
+                    setApiKeys({
+                      ...apiKeys,
+                      blogFallbackImageUrl: e.target.value,
+                    })
+                  }
+                  placeholder="https://www.jadoremaloc.com/logo.png"
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-gray-900"
+                />
+                <p className="text-xs text-gray-500 mt-2">
+                  Uploaded CTA images are stored inline (base64) and can't be
+                  hosted by the Blog API. They're replaced with this URL at
+                  publish time (or removed if left empty).
+                </p>
               </div>
             </div>
 

@@ -7,6 +7,9 @@ export type BlogApiServiceCredentials = {
   apiKey: string;
   authorName?: string;
   authorAvatarUrl?: string;
+  // Inline base64 images in the content can't be hosted via this API. When set,
+  // they're rewritten to this public URL; when empty, they're removed.
+  fallbackImageUrl?: string;
 };
 
 /**
@@ -20,11 +23,17 @@ export class BlogApiService {
   private base: string;
   private authorName?: string;
   private authorAvatarUrl?: string;
+  private fallbackImageUrl?: string;
 
   constructor(creds: BlogApiServiceCredentials) {
     this.base = (creds.url || "").trim().replace(/\/+$/, "");
     this.authorName = creds.authorName?.trim() || undefined;
     this.authorAvatarUrl = creds.authorAvatarUrl?.trim() || undefined;
+    this.fallbackImageUrl =
+      creds.fallbackImageUrl?.trim() &&
+      !creds.fallbackImageUrl.trim().startsWith("data:")
+        ? creds.fallbackImageUrl.trim()
+        : undefined;
 
     this.api = axios.create({
       baseURL: this.base,
@@ -48,13 +57,23 @@ export class BlogApiService {
     status: "draft" | "published" = "published",
     featuredImageUrl?: string
   ): Promise<{ slug: string; url: string }> {
-    // Strip a leading H1 — the destination renders the title itself.
-    const cleanedHtml = this.stripLeadingTitle(
-      content.html,
-      seoMetadata.metaTitle
+    // Strip a leading H1 (the destination renders the title itself) and rewrite
+    // inline base64 `data:` images: they can't be hosted via this API and a
+    // single one blows past the 200k content limit. They're replaced with the
+    // configured fallback URL (or removed if none). Content images are http
+    // URLs (Unsplash) and are kept as-is.
+    const cleanedHtml = this.rewriteBase64Images(
+      this.stripLeadingTitle(content.html, seoMetadata.metaTitle)
     );
+    // Cover = explicit featured image (if it's a real URL), else the first
+    // http(s) image in the content, else the fallback URL. Never a data: URI.
     const coverImage =
-      featuredImageUrl || this.extractFirstImageUrl(content.html) || undefined;
+      (featuredImageUrl && !featuredImageUrl.startsWith("data:")
+        ? featuredImageUrl
+        : undefined) ||
+      this.extractFirstHttpImageUrl(content.html) ||
+      this.fallbackImageUrl ||
+      undefined;
 
     const payload: Record<string, any> = {
       title: seoMetadata.metaTitle || topic,
@@ -145,10 +164,28 @@ export class BlogApiService {
     }
   }
 
-  private extractFirstImageUrl(html: string): string | null {
+  // First http(s) image in the content — skips inline base64 data: images.
+  private extractFirstHttpImageUrl(html: string): string | null {
     if (!html) return null;
-    const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-    return imgMatch ? imgMatch[1] : null;
+    const m = html.match(/<img[^>]+src=["'](https?:\/\/[^"']+)["']/i);
+    return m ? m[1] : null;
+  }
+
+  // Rewrite every <img> whose src is an inline base64 data: URI: swap the src
+  // for the configured fallback URL, or drop the whole <img> when none is set.
+  // The surrounding CTA block (title, text, button) is preserved either way.
+  private rewriteBase64Images(html: string): string {
+    if (!html) return html;
+    return html.replace(
+      /<img\b[^>]*\bsrc=["']data:[^"']*["'][^>]*>/gi,
+      (tag) =>
+        this.fallbackImageUrl
+          ? tag.replace(
+              /\bsrc=["']data:[^"']*["']/i,
+              `src="${this.fallbackImageUrl}"`
+            )
+          : ""
+    );
   }
 
   private stripLeadingTitle(html: string, title: string): string {
