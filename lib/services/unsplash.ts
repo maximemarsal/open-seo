@@ -161,6 +161,64 @@ Guidelines:
     }
   }
 
+  // Generate a broad English Unsplash search term for the article COVER (hero)
+  // image, based on the whole article rather than a single section.
+  async generateSearchTermForArticle(
+    articleTitle?: string,
+    articleDescription?: string,
+    keywords?: string[]
+  ): Promise<string> {
+    const fallbackTerms = [
+      articleTitle || "",
+      ...(keywords || []),
+      articleDescription || "",
+    ].filter(Boolean);
+
+    if (!this.openai) {
+      const translated = await this.translateKeywordsToEnglish(fallbackTerms);
+      return this.normalizeBroad(translated.join(" ")) || "modern apartment";
+    }
+
+    try {
+      const prompt = `You are an expert image curator for Unsplash.
+Context:
+- Article title: ${articleTitle || ""}
+- Article description: ${articleDescription || ""}
+- Keywords: ${(keywords || []).slice(0, 5).join(", ")}
+
+Goal: Return ONE concise English search term (1–3 words, lowercase) for a COVER/HERO photo that represents the WHOLE article — a concrete photographic SUBJECT (object/place/material/scene). Be generic, not specific.
+Guidelines:
+- Prefer physical subjects over abstract concepts.
+- No punctuation, brands, or locations. Output ONLY the term.`;
+
+      const res = await this.openai.chat.completions.create({
+        model: config.openai.model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You generate terse, high-signal image search terms for Unsplash. Output only the term.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 40,
+      });
+
+      let text = (res.choices[0].message.content || "").trim();
+      text = text.replace(/^"|"$/g, "").split(/\n|,/)[0].trim();
+      text = this.normalizeBroad(text);
+      if (!text) {
+        const translated = await this.translateKeywordsToEnglish(fallbackTerms);
+        return this.normalizeBroad(translated.join(" ")) || "modern apartment";
+      }
+      return text;
+    } catch {
+      const translated = await this.translateKeywordsToEnglish(fallbackTerms);
+      return this.normalizeBroad(translated.join(" ")) || "modern apartment";
+    }
+  }
+
   private normalizeBroad(text: string): string {
     const stopwords = new Set([
       "the",

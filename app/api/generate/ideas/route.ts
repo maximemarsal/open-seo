@@ -5,7 +5,11 @@ import {
   resolveSiteId,
 } from "@/lib/auth-server";
 import { getUserApiKeysServer } from "@/lib/services/userKeys.server";
-import { getUserProfileServer } from "@/lib/services/userProfile.server";
+import {
+  getUserProfileServer,
+  dedupeTitles,
+} from "@/lib/services/userProfile.server";
+import { getUserArticleTitles } from "@/lib/services/articles.server";
 import { ensureUserMigrated } from "@/lib/services/migration.server";
 import { config as appConfig } from "@/lib/config";
 import { AITextGenerator, ChatMessage } from "@/lib/services/ai";
@@ -147,14 +151,29 @@ export async function POST(request: NextRequest) {
       });
 
       const businessContext = (profile?.businessContext || "").trim();
-      const knownTitles = profile?.knownArticleTitles || [];
+
+      // Build the exclusion list from every source we have so we never repeat
+      // existing topics: WordPress-synced titles, the user's own saved articles
+      // (any target / status), and titles the client already has on screen or
+      // queued (passed as `excludeTitles`).
+      const savedTitles = await getUserArticleTitles(userId, siteId).catch(
+        () => [] as string[]
+      );
+      const clientExcludes: string[] = Array.isArray(body.excludeTitles)
+        ? body.excludeTitles.filter((t: unknown) => typeof t === "string")
+        : [];
+      const knownTitles = dedupeTitles([
+        ...(profile?.knownArticleTitles || []),
+        ...savedTitles,
+        ...clientExcludes,
+      ]);
 
       const knownBlock = knownTitles.length
-        ? `Already published articles (DO NOT propose titles that overlap with these — pick fresh angles):\n${knownTitles
-            .slice(0, 200)
+        ? `Existing/already-generated article titles (DO NOT repeat, paraphrase, or propose near-duplicates of these — pick genuinely fresh topics and angles):\n${knownTitles
+            .slice(0, 300)
             .map((t) => `- ${t}`)
             .join("\n")}`
-        : "There are no previously published articles yet.";
+        : "There are no previously published or generated articles yet.";
 
       const userPrompt = `Today's date: ${today}.
 
@@ -171,7 +190,8 @@ Generate ${count} distinct, SEO-friendly article TITLE IDEAS that this business 
 Strict rules:
 - Each item is ONLY a title (no description, no numbering, no quotes).
 - Titles must be in the same language as the business context above (default: French).
-- Avoid duplicates and near-duplicates of already published articles.
+- Avoid duplicates and near-duplicates of the existing titles listed above (different wording but same topic counts as a duplicate — exclude it).
+- Cover varied subtopics, formats, and angles so the ${count} ideas are also distinct from EACH OTHER.
 - Prefer concrete, benefit-driven angles over vague topics.
 - Return ONLY a valid JSON array of strings. No markdown, no commentary.
 

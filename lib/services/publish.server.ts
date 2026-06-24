@@ -141,7 +141,12 @@ export async function publishArticleToSite(
     html: article.content,
     wordCount: article.wordCount,
   };
-  const result = await ctx.publish(content, article.seoMetadata, article.title);
+  const result = await ctx.publish(
+    content,
+    article.seoMetadata,
+    article.title,
+    article.coverImageUrl
+  );
 
   const updated = await markArticlePublished(userId, siteId, article.id, {
     wordpressPostId: result.postId,

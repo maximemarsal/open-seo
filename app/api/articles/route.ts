@@ -66,7 +66,8 @@ export async function POST(request: NextRequest) {
     const { userId, siteId } = auth;
 
     const body = await request.json();
-    const { title, content, seoMetadata, outline, images, wordCount } = body;
+    const { title, content, seoMetadata, outline, images, coverImageUrl, wordCount } =
+      body;
 
     if (!title || !content) {
       return NextResponse.json(
@@ -86,6 +87,8 @@ export async function POST(request: NextRequest) {
       },
       outline,
       images,
+      // Firestore rejects `undefined` — only include the cover when present.
+      ...(coverImageUrl ? { coverImageUrl } : {}),
       wordCount: wordCount || 0,
       status: "draft",
     });

@@ -403,6 +403,7 @@ export default function BulkGeneratePage() {
                     seoMetadata: data.payload.seoMetadata,
                     outline: data.payload.outline,
                     images: data.payload.images,
+                    coverImageUrl: data.payload.coverImageUrl,
                     wordCount: data.payload.wordCount,
                   }),
                 });
@@ -627,6 +628,12 @@ export default function BulkGeneratePage() {
           count: ideasCount,
           aiProvider: config.aiProvider,
           model: config.model,
+          // Exclude what's already on screen or queued so re-generating yields
+          // genuinely new ideas (saved-article titles are excluded server-side).
+          excludeTitles: [
+            ...ideas.map((i) => i.title),
+            ...topics.map((t) => t.topic),
+          ],
         }),
       });
       const data = await resp.json();

@@ -65,6 +65,21 @@ export async function getUserArticles(
 }
 
 /**
+ * Get just the titles of all saved articles for a site (lightweight — skips the
+ * heavy `content` field). Used to exclude already-generated topics from new idea
+ * generation.
+ */
+export async function getUserArticleTitles(
+  userId: string,
+  siteId: string
+): Promise<string[]> {
+  const snapshot = await articlesCol(userId, siteId).select("title").get();
+  return snapshot.docs
+    .map((doc) => (doc.data().title as string) || "")
+    .filter(Boolean);
+}
+
+/**
  * Get a single article by ID
  */
 export async function getArticleById(

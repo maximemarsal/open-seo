@@ -547,6 +547,36 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          // Step 4.55: Fetch a DEDICATED cover image (hero), distinct from the
+          // in-body images. Best-effort: if Unsplash isn't configured or returns
+          // nothing, coverImageUrl stays undefined and publish falls back to the
+          // first in-body image (legacy behaviour).
+          let coverImageUrl: string | undefined;
+          try {
+            const coverUnsplash = new UnsplashService();
+            const usedIds = new Set(
+              images.map((i) => i.id).filter(Boolean) as string[]
+            );
+            const coverTerm = await coverUnsplash.generateSearchTermForArticle(
+              outline.title,
+              seoMetadata?.metaDescription,
+              seoMetadata?.keywords
+            );
+            // Pull a few candidates and pick the first not already used in the body.
+            let candidates = await coverUnsplash.searchImages([coverTerm], 5, 1);
+            let pick =
+              candidates.find((c) => c.id && !usedIds.has(c.id)) || candidates[0];
+            if (!pick) {
+              candidates = await coverUnsplash.searchImages([coverTerm], 5, 2);
+              pick =
+                candidates.find((c) => c.id && !usedIds.has(c.id)) ||
+                candidates[0];
+            }
+            coverImageUrl = pick?.url;
+          } catch {
+            // Cover image is optional — ignore failures.
+          }
+
           // Step 4.6: Inject CTAs into the article
           if (ctas && ctas.length > 0) {
             const htmlWithCTAs = injectCTAsIntoArticle(
@@ -579,7 +609,8 @@ export async function POST(request: NextRequest) {
               contentWithImages,
               seoMetadata,
               topic,
-              images && images.length > 0 ? images[0].url : undefined
+              coverImageUrl ||
+                (images && images.length > 0 ? images[0].url : undefined)
             );
           } else {
             sendProgress({
@@ -631,6 +662,7 @@ export async function POST(request: NextRequest) {
             outline,
             seoMetadata,
             images,
+            coverImageUrl,
             research: {
               model: researchData.model,
               queries: researchData.queries,

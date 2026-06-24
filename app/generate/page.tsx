@@ -101,6 +101,7 @@ export default function GeneratePage() {
       sample?: { title: string; url: string }[];
     };
     images?: { url: string; alt: string; searchTerm?: string }[];
+    coverImageUrl?: string;
   } | null>(null);
   const [showResearch, setShowResearch] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -690,6 +691,7 @@ export default function GeneratePage() {
           seoMetadata: result.seoMetadata,
           outline: result.outline,
           images: result.images,
+          coverImageUrl: result.coverImageUrl,
           wordCount: result.wordCount,
         }),
       });

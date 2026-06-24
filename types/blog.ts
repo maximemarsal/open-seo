@@ -125,6 +125,8 @@ export interface SavedArticle {
   seoMetadata: SEOMetadata;
   outline?: BlogOutline;
   images?: ImageAsset[];
+  // Dedicated cover/featured image, distinct from the in-body images.
+  coverImageUrl?: string;
   wordCount: number;
   status: "draft" | "scheduled" | "published";
   scheduledAt?: string | null; // ISO date string
