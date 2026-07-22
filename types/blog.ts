@@ -121,6 +121,10 @@ export interface SavedArticle {
   id: string;
   userId: string;
   title: string;
+  // Original topic/subject the article was generated from (bulk or single).
+  // Kept so the generated title (SEO metaTitle) can be traced back to what
+  // the user actually queued.
+  topic?: string;
   content: string;
   seoMetadata: SEOMetadata;
   outline?: BlogOutline;

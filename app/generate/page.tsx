@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles,
@@ -119,6 +119,131 @@ export default function GeneratePage() {
   const [ctas, setCtas] = useState<CTA[]>([]);
   const [showCTAModal, setShowCTAModal] = useState(false);
   const [editingCTA, setEditingCTA] = useState<CTA | undefined>();
+  // Controls the active job-polling loop so unmount/site-switch stops it.
+  const pollAbortRef = useRef<{ aborted: boolean } | null>(null);
+
+  // Generation now runs as a SERVER-SIDE job: the page enqueues it, then
+  // polls its status. The job id is kept in localStorage so returning to the
+  // page (or reloading) re-attaches to the in-flight generation.
+  const activeJobStorageKey =
+    user && activeSiteId ? `activeGenJob.${user.uid}.${activeSiteId}` : null;
+
+  const finalizeCompletedJob = async (job: any, idToken: string) => {
+    let article: any = null;
+    if (job.articleId) {
+      try {
+        const resp = await fetch(`/api/articles/${job.articleId}`, {
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+          },
+        });
+        if (resp.ok) article = (await resp.json()).article;
+      } catch {
+        // Result summary still shows even if the article fetch fails.
+      }
+    }
+    // The worker already saved (and scheduled/published) the article — mark
+    // it saved so the auto-save effect doesn't duplicate it.
+    setSavedArticleId(job.articleId || null);
+    setAutoSaveAttempted(true);
+    setResult({
+      ...(job.result || {}),
+      articleContent: article?.content,
+      seoMetadata: article?.seoMetadata,
+      outline: article?.outline,
+      images: article?.images,
+      coverImageUrl: article?.coverImageUrl,
+      wordCount: job.result?.wordCount ?? article?.wordCount ?? 0,
+      seoScore: job.result?.seoScore ?? 0,
+    });
+    setProgress({
+      step: "completed",
+      message: "Article generated successfully!",
+      progress: 100,
+    });
+    toast.success("Article generated successfully!");
+  };
+
+  const pollJobUntilDone = async (
+    jobId: string,
+    ctl: { aborted: boolean }
+  ) => {
+    while (!ctl.aborted) {
+      const idToken = await user?.getIdToken();
+      if (!idToken) throw new Error("Authentication failed");
+      const resp = await fetch(`/api/generate/jobs/${jobId}`, {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+        },
+      });
+      if (resp.status === 404) throw new Error("Generation job not found");
+      if (resp.ok) {
+        const { job } = await resp.json();
+        if (job.status === "failed") {
+          throw new Error(
+            job.errorHint
+              ? `${job.error} — ${job.errorHint}`
+              : job.error || "Generation failed"
+          );
+        }
+        if (job.status === "completed") {
+          if (!ctl.aborted) await finalizeCompletedJob(job, idToken);
+          return;
+        }
+        if (!ctl.aborted) {
+          setProgress({
+            step: (job.step as any) || "research",
+            message:
+              job.status === "queued"
+                ? "En file d'attente sur le serveur..."
+                : job.message || "Generating...",
+            progress: job.progress || 0,
+            currentSection: job.currentSection || undefined,
+          });
+        }
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  };
+
+  // Re-attach to an in-flight server job after a reload or navigation.
+  useEffect(() => {
+    if (!user || !activeSiteId) return;
+    const key = `activeGenJob.${user.uid}.${activeSiteId}`;
+    const jobId = localStorage.getItem(key);
+    if (!jobId) return;
+
+    const ctl = { aborted: false };
+    pollAbortRef.current = ctl;
+    setIsGenerating(true);
+    setProgress({
+      step: "research",
+      message: "Reconnexion à la génération en cours...",
+      progress: 0,
+    });
+    (async () => {
+      try {
+        await pollJobUntilDone(jobId, ctl);
+        localStorage.removeItem(key);
+      } catch (error: any) {
+        localStorage.removeItem(key);
+        if (!ctl.aborted) {
+          toast.error(error?.message || "Generation failed");
+          setProgress((prev) =>
+            prev ? { ...prev, error: error?.message } : null
+          );
+        }
+      } finally {
+        if (!ctl.aborted) setIsGenerating(false);
+      }
+    })();
+    return () => {
+      ctl.aborted = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, activeSiteId]);
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -485,7 +610,9 @@ export default function GeneratePage() {
         return;
       }
 
-      const response = await fetch("/api/generate", {
+      // Enqueue a server-side generation job — it keeps running even if the
+      // user leaves this page (the job id is persisted for re-attachment).
+      const response = await fetch("/api/generate/jobs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -493,108 +620,83 @@ export default function GeneratePage() {
           ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
         },
         body: JSON.stringify({
-          topic,
-          publishToWordPress,
-          researchDepth,
-          extraContext,
-          numberOfImages,
-          aiProvider,
-          model:
-            model ||
-            openaiModel ||
-            geminiModel ||
-            anthropicModel ||
-            deepseekModel ||
-            qwenModel ||
-            grokModel ||
-            undefined,
-          openaiModel: openaiModel || undefined,
-          gpt5ReasoningEffort: gpt5ReasoningEffort || undefined,
-          gpt5Verbosity: gpt5Verbosity || undefined,
-          useResearch,
-          ctas: ctas.map(
-            ({
-            id,
-            title,
-            description,
-            buttonText,
-            buttonUrl,
-            imageUrl,
-            positionType,
-            sectionNumber,
-            style,
-            customColors,
-            }) => ({
-              id,
-              title,
-              description,
-              buttonText,
-              buttonUrl,
-              imageUrl,
-              positionType,
-              sectionNumber,
-              style,
-              customColors,
-            })
-          ),
+          topics: [{ topic }],
+          options: {
+            publishToWordPress,
+            researchDepth,
+            extraContext,
+            numberOfImages,
+            aiProvider,
+            model:
+              model ||
+              openaiModel ||
+              geminiModel ||
+              anthropicModel ||
+              deepseekModel ||
+              qwenModel ||
+              grokModel ||
+              undefined,
+            gpt5ReasoningEffort: gpt5ReasoningEffort || undefined,
+            gpt5Verbosity: gpt5Verbosity || undefined,
+            useResearch,
+            ctas: ctas.map(
+              ({
+                id,
+                title,
+                description,
+                buttonText,
+                buttonUrl,
+                imageUrl,
+                positionType,
+                sectionNumber,
+                randomCount,
+                style,
+                customColors,
+              }) => ({
+                id,
+                title,
+                description,
+                buttonText,
+                buttonUrl,
+                imageUrl,
+                positionType,
+                sectionNumber,
+                randomCount,
+                style,
+                customColors,
+              })
+            ),
+          },
         }),
       });
 
+      const data = await response.json();
       if (!response.ok) {
-        try {
-          const data = await response.json();
-          const message = data?.error || "Error during generation";
-          const hint = data?.hint ? ` — ${data.hint}` : "";
-          throw new Error(`${message}${hint}`);
-        } catch {
-          throw new Error("Error during generation");
-        }
+        const message = data?.error || "Error during generation";
+        const hint = data?.hint ? ` — ${data.hint}` : "";
+        throw new Error(`${message}${hint}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Stream not available");
+      const jobId = data.jobs?.[0]?.id;
+      if (!jobId) {
+        throw new Error("Failed to start generation job");
       }
 
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      if (activeJobStorageKey) {
+        localStorage.setItem(activeJobStorageKey, jobId);
+      }
+      toast(
+        "Génération lancée sur le serveur — vous pouvez quitter la page, elle continuera.",
+        { icon: "🚀", duration: 5000 }
+      );
 
-        const chunk = new TextDecoder().decode(value, { stream: true });
-        buffer += chunk;
-
-        // Process complete messages separated by double newlines
-        const parts = buffer.split("\n\n");
-        // Keep the last part in the buffer as it might be incomplete
-        buffer = parts.pop() || "";
-
-        for (const part of parts) {
-          if (part.trim().startsWith("data: ")) {
-            try {
-              // Remove "data: " prefix and parse
-              const jsonStr = part.trim().substring(6);
-              const data = JSON.parse(jsonStr);
-
-              if (data.type === "progress") {
-                setProgress(data.payload);
-              } else if (data.type === "complete") {
-                setResult(data.payload);
-                toast.success("Article generated successfully!");
-              } else if (data.type === "error") {
-                const errorMessage =
-                  data.payload.message || "An error occurred";
-                const errorHint = data.payload.hint || "";
-                throw new Error(
-                  errorHint ? `${errorMessage} — ${errorHint}` : errorMessage
-                );
-              }
-            } catch (parseError) {
-              console.warn("Parsing error for chunk:", parseError);
-              // Don't crash on parse error, just log it. 
-              // The buffer logic handles splits, but malformed JSON from source could still trigger this.
-            }
-          }
+      const ctl = { aborted: false };
+      pollAbortRef.current = ctl;
+      try {
+        await pollJobUntilDone(jobId, ctl);
+      } finally {
+        if (!ctl.aborted && activeJobStorageKey) {
+          localStorage.removeItem(activeJobStorageKey);
         }
       }
     } catch (error) {

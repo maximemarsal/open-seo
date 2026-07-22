@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus,
@@ -12,8 +12,6 @@ import {
   Clock,
   FileText,
   ChevronDown,
-  Play,
-  Pause,
   RotateCcw,
   Sparkles,
   Calendar,
@@ -79,39 +77,31 @@ const todayYmd = () => {
   return `${y}-${m}-${dd}`;
 };
 
-// Network-resilient helpers
-const isNetworkError = (err: any): boolean => {
-  if (typeof navigator !== "undefined" && !navigator.onLine) return true;
-  const msg = (err?.message || String(err || "")).toLowerCase();
-  return (
-    msg.includes("failed to fetch") ||
-    msg.includes("network error") ||
-    msg.includes("network request failed") ||
-    msg.includes("load failed") ||
-    msg.includes("err_internet_disconnected") ||
-    msg.includes("err_network") ||
-    msg.includes("the network connection was lost") ||
-    msg.includes("connection reset") ||
-    msg.includes("connection refused") ||
-    err?.name === "TypeError" // fetch throws TypeError on network failure
-  );
-};
+// A background generation job, as returned by /api/generate/jobs. Jobs run
+// ON THE SERVER — the page only enqueues them and polls their status, so the
+// user can safely close the tab mid-generation.
+interface ServerJob {
+  id: string;
+  topic: string;
+  status: "queued" | "running" | "completed" | "failed";
+  progress: number;
+  message?: string;
+  currentSection?: string;
+  articleId?: string;
+  scheduledAt?: string | null;
+  // Small result summary written by the worker — articleTitle is the final
+  // SEO title, shown next to the original topic so both stay linked.
+  result?: {
+    articleTitle?: string;
+    seoScore?: number;
+    wordCount?: number;
+  };
+  error?: string;
+  errorHint?: string;
+  createdAt: string;
+}
 
-const waitForOnline = (): Promise<void> => {
-  if (typeof window === "undefined" || navigator.onLine) {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const handler = () => {
-      window.removeEventListener("online", handler);
-      resolve();
-    };
-    window.addEventListener("online", handler);
-  });
-};
-
-const MAX_NETWORK_RETRIES = 3;
-const RETRY_DELAYS_MS = [3000, 10000, 30000];
+const JOBS_POLL_INTERVAL_MS = 4000;
 
 export default function BulkGeneratePage() {
   const { user, loading: authLoading } = useAuth();
@@ -119,9 +109,10 @@ export default function BulkGeneratePage() {
   const router = useRouter();
   const [topics, setTopics] = useState<BulkTopic[]>([]);
   const [newTopic, setNewTopic] = useState("");
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const isPausedRef = useRef(false);
+  // True only while the batch is being sent to the server (enqueue call).
+  const [isLaunching, setIsLaunching] = useState(false);
+  // Server-side jobs for this site (queued/running/completed/failed).
+  const [jobs, setJobs] = useState<ServerJob[]>([]);
   const [showConfig, setShowConfig] = useState(false);
   const [config, setConfig] = useState<GenerationConfig>({
     aiProvider: "openai",
@@ -145,32 +136,38 @@ export default function BulkGeneratePage() {
   const [showCTAModal, setShowCTAModal] = useState(false);
   const [editingCTA, setEditingCTA] = useState<CTA | undefined>(undefined);
 
-  // Online/offline tracking
-  const [isOnline, setIsOnline] = useState(
-    typeof navigator !== "undefined" ? navigator.onLine : true
+  // --- Server jobs: fetch + poll while any job is still queued/running ---
+  const fetchJobs = React.useCallback(async () => {
+    if (!user || !activeSiteId) return;
+    try {
+      const idToken = await user.getIdToken();
+      const resp = await fetch("/api/generate/jobs", {
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          "x-site-id": activeSiteId,
+        },
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (Array.isArray(data.jobs)) setJobs(data.jobs);
+    } catch {
+      // Polling is best-effort — network hiccups just skip a tick.
+    }
+  }, [user, activeSiteId]);
+
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  const hasActiveJobs = jobs.some(
+    (j) => j.status === "queued" || j.status === "running"
   );
 
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      toast.success("Network restored — bulk will continue if running.", {
-        icon: "🟢",
-      });
-    };
-    const handleOffline = () => {
-      setIsOnline(false);
-      toast.error("Offline — bulk paused, will resume automatically.", {
-        icon: "🔴",
-        duration: 5000,
-      });
-    };
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
+    if (!hasActiveJobs) return;
+    const timer = setInterval(fetchJobs, JOBS_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [hasActiveJobs, fetchJobs]);
 
   // Generate-ideas modal state
   const [isIdeasOpen, setIsIdeasOpen] = useState(false);
@@ -266,219 +263,12 @@ export default function BulkGeneratePage() {
     setTopics(topics.filter((t) => t.id !== id));
   };
 
-  const resetTopic = (id: string) => {
-    setTopics(
-      topics.map((t) =>
-        t.id === id
-          ? { ...t, status: "pending", progress: undefined, error: undefined }
-          : t
-      )
-    );
-  };
-
-  const updateTopicStatus = (
-    id: string,
-    updates: Partial<BulkTopic>
-  ) => {
-    setTopics((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, ...updates } : t))
-    );
-  };
-
   const computeScheduledAt = (index: number): string => {
     const [hh, mm] = (config.publishTime || "09:00").split(":");
     const base = new Date(`${config.startDate}T00:00:00`);
     base.setHours(parseInt(hh, 10) || 9, parseInt(mm, 10) || 0, 0, 0);
     base.setDate(base.getDate() + index * (config.intervalDays || 3));
     return base.toISOString();
-  };
-
-  const generateSingleArticle = async (
-    topicItem: BulkTopic,
-    scheduleIndex: number
-  ): Promise<boolean> => {
-    let attempt = 0;
-
-    // Retry loop — handles transient network errors with exponential backoff
-    // and waits for the connection to come back if offline.
-    while (true) {
-      // Block until online
-      if (typeof navigator !== "undefined" && !navigator.onLine) {
-        updateTopicStatus(topicItem.id, {
-          status: "generating",
-          progress: 0,
-          message: "Offline — waiting for network...",
-        });
-        await waitForOnline();
-      }
-
-      updateTopicStatus(topicItem.id, {
-        status: "generating",
-        progress: 0,
-        message:
-          attempt === 0
-            ? "Starting..."
-            : `Retry ${attempt}/${MAX_NETWORK_RETRIES}...`,
-      });
-
-      try {
-        const idToken = await user?.getIdToken();
-        if (!idToken) {
-          throw new Error("Authentication failed");
-        }
-
-        const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${idToken}`,
-          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
-        },
-        body: JSON.stringify({
-          topic: topicItem.topic,
-          publishToWordPress: config.publishToWordPress,
-          researchDepth: config.researchDepth,
-          numberOfImages: config.numberOfImages,
-          aiProvider: config.aiProvider,
-          model: config.model,
-          useResearch: config.useResearch,
-          extraContext: config.extraContext,
-          ctas,
-          ...(config.aiProvider === "openai" &&
-          config.model.toLowerCase().startsWith("gpt-5")
-            ? {
-                gpt5ReasoningEffort: config.gpt5ReasoningEffort,
-                gpt5Verbosity: config.gpt5Verbosity,
-              }
-            : {}),
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Generation failed");
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Stream not available");
-      }
-
-      let buffer = "";
-      let articleId: string | undefined;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = new TextDecoder().decode(value, { stream: true });
-        buffer += chunk;
-
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-
-        for (const part of parts) {
-          if (part.trim().startsWith("data: ")) {
-            try {
-              const jsonStr = part.trim().substring(6);
-              const data = JSON.parse(jsonStr);
-
-              if (data.type === "progress") {
-                updateTopicStatus(topicItem.id, {
-                  progress: data.payload.progress,
-                  message: data.payload.message,
-                });
-              } else if (data.type === "complete") {
-                // Auto-save the article
-                const saveResponse = await fetch("/api/articles", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${idToken}`,
-                    ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
-                  },
-                  body: JSON.stringify({
-                    title: data.payload.seoMetadata?.metaTitle || topicItem.topic,
-                    content: data.payload.articleContent,
-                    seoMetadata: data.payload.seoMetadata,
-                    outline: data.payload.outline,
-                    images: data.payload.images,
-                    coverImageUrl: data.payload.coverImageUrl,
-                    wordCount: data.payload.wordCount,
-                  }),
-                });
-
-                if (saveResponse.ok) {
-                  const saveData = await saveResponse.json();
-                  articleId = saveData.article.id;
-
-                  // Auto-schedule if enabled
-                  if (config.autoSchedule && articleId) {
-                    try {
-                      const scheduledAt = computeScheduledAt(scheduleIndex);
-                      await fetch(`/api/articles/${articleId}/schedule`, {
-                        method: "POST",
-                        headers: {
-                          "Content-Type": "application/json",
-                          Authorization: `Bearer ${idToken}`,
-                          ...(activeSiteId
-                            ? { "x-site-id": activeSiteId }
-                            : {}),
-                        },
-                        body: JSON.stringify({ scheduledAt }),
-                      });
-                    } catch (scheduleErr) {
-                      console.warn(
-                        "Auto-schedule failed for article",
-                        articleId,
-                        scheduleErr
-                      );
-                    }
-                  }
-                }
-              } else if (data.type === "error") {
-                throw new Error(data.payload.message || "Generation error");
-              }
-            } catch (parseError) {
-              // Ignore parse errors
-            }
-          }
-        }
-      }
-
-      updateTopicStatus(topicItem.id, {
-        status: "completed",
-        progress: 100,
-        message: "Completed!",
-        articleId,
-      });
-
-      return true;
-      } catch (error: any) {
-        const isNet = isNetworkError(error);
-        if (isNet && attempt < MAX_NETWORK_RETRIES) {
-          attempt += 1;
-          const delay = RETRY_DELAYS_MS[attempt - 1] || 30000;
-          updateTopicStatus(topicItem.id, {
-            status: "generating",
-            message: `Network error — retry ${attempt}/${MAX_NETWORK_RETRIES} in ${Math.round(
-              delay / 1000
-            )}s...`,
-          });
-          await new Promise((r) => setTimeout(r, delay));
-          continue;
-        }
-        // Non-network error or retries exhausted — mark as failed
-        updateTopicStatus(topicItem.id, {
-          status: "failed",
-          error: error.message || "Unknown error",
-          message: isNet
-            ? `Network error after ${MAX_NETWORK_RETRIES} retries`
-            : error.message,
-        });
-        return false;
-      }
-    }
   };
 
   const startBulkGeneration = async () => {
@@ -550,64 +340,123 @@ export default function BulkGeneratePage() {
       return;
     }
 
-    setIsGenerating(true);
-    setIsPaused(false);
-    isPausedRef.current = false;
-
-    // Scheduling index continues from already-completed/scheduled topics
-    // so that resuming after a pause keeps the cadence correct.
-    const alreadyScheduledCount = topics.filter(
-      (t) => t.status === "completed"
-    ).length;
-    let scheduledInRun = 0;
-    let successesInRun = 0;
-    let failuresInRun = 0;
-
-    for (const topicItem of pendingTopics) {
-      // Check if paused using ref (not state) to get current value
-      if (isPausedRef.current) {
-        break;
+    // Enqueue everything on the server: generation runs in the background
+    // (survives closing the page) and this page just polls job status.
+    setIsLaunching(true);
+    try {
+      const idToken = await user?.getIdToken();
+      if (!idToken) {
+        throw new Error("Authentication failed");
       }
 
-      const scheduleIndex = alreadyScheduledCount + scheduledInRun;
-      const ok = await generateSingleArticle(topicItem, scheduleIndex);
-      if (ok) {
-        successesInRun += 1;
-        if (config.autoSchedule) scheduledInRun += 1;
-      } else {
-        failuresInRun += 1;
+      const items = pendingTopics.map((t, index) => ({
+        topic: t.topic,
+        scheduledAt: config.autoSchedule ? computeScheduledAt(index) : null,
+      }));
+
+      const response = await fetch("/api/generate/jobs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+        },
+        body: JSON.stringify({
+          topics: items,
+          options: {
+            publishToWordPress: config.publishToWordPress,
+            researchDepth: config.researchDepth,
+            numberOfImages: config.numberOfImages,
+            aiProvider: config.aiProvider,
+            model: config.model,
+            useResearch: config.useResearch,
+            extraContext: config.extraContext,
+            ctas,
+            ...(config.aiProvider === "openai" &&
+            config.model.toLowerCase().startsWith("gpt-5")
+              ? {
+                  gpt5ReasoningEffort: config.gpt5ReasoningEffort,
+                  gpt5Verbosity: config.gpt5Verbosity,
+                }
+              : {}),
+          },
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        const hint = data?.hint ? ` — ${data.hint}` : "";
+        throw new Error((data?.error || "Failed to start generation") + hint);
       }
 
-      // Small delay between generations to avoid rate limits
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, config.delayMs || 0))
+      // Posted topics now live as server jobs — drop them from the local queue.
+      const postedIds = new Set(pendingTopics.map((t) => t.id));
+      setTopics((prev) => prev.filter((t) => !postedIds.has(t.id)));
+      await fetchJobs();
+
+      toast.success(
+        `${items.length} article${items.length > 1 ? "s" : ""} en cours de génération sur le serveur — vous pouvez quitter la page.`,
+        { icon: "🚀", duration: 6000 }
       );
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to start generation");
+    } finally {
+      setIsLaunching(false);
     }
+  };
 
-    setIsGenerating(false);
-    if (!isPausedRef.current) {
-      if (config.autoSchedule && scheduledInRun > 0) {
-        const firstAt = computeScheduledAt(alreadyScheduledCount);
-        const lastAt = computeScheduledAt(
-          alreadyScheduledCount + scheduledInRun - 1
-        );
-        toast.success(
-          `Done — ${successesInRun} article${
-            successesInRun > 1 ? "s" : ""
-          } generated, ${scheduledInRun} scheduled from ${new Date(
-            firstAt
-          ).toLocaleDateString("fr-FR")} to ${new Date(
-            lastAt
-          ).toLocaleDateString("fr-FR")}.`,
-          { duration: 6000 }
-        );
-      } else {
-        toast.success(
-          `Done — ${successesInRun} generated${
-            failuresInRun ? `, ${failuresInRun} failed` : ""
-          }.`
-        );
+  // Cancel a job still waiting in the queue (running jobs can't be cancelled).
+  const cancelQueuedJob = async (jobId: string) => {
+    if (!user) return;
+    try {
+      const idToken = await user.getIdToken();
+      const resp = await fetch(`/api/generate/jobs/${jobId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+        },
+      });
+      if (!resp.ok) {
+        const data = await resp.json();
+        throw new Error(data?.error || "Failed to cancel job");
       }
+      setJobs((prev) => prev.filter((j) => j.id !== jobId));
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to cancel job");
+    }
+  };
+
+  // Put a failed job's topic back in the local queue and remove the job.
+  const retryFailedJob = async (job: ServerJob) => {
+    setTopics((prev) => [
+      ...prev,
+      {
+        id: `topic-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        topic: job.topic,
+        status: "pending",
+      },
+    ]);
+    await cancelQueuedJob(job.id);
+    toast.success("Topic re-added to the queue. Click Generate All to retry.");
+  };
+
+  const clearFinishedJobs = async () => {
+    if (!user) return;
+    try {
+      const idToken = await user.getIdToken();
+      await fetch("/api/generate/jobs?scope=finished", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${idToken}`,
+          ...(activeSiteId ? { "x-site-id": activeSiteId } : {}),
+        },
+      });
+      setJobs((prev) =>
+        prev.filter((j) => j.status === "queued" || j.status === "running")
+      );
+    } catch {
+      // Best-effort — the next poll re-syncs.
     }
   };
 
@@ -679,32 +528,17 @@ export default function BulkGeneratePage() {
     toast.success(`Added ${selected.length} topic${selected.length > 1 ? "s" : ""} to queue.`);
   };
 
-  const retryAllFailed = () => {
-    setTopics((prev) =>
-      prev.map((t) =>
-        t.status === "failed"
-          ? { ...t, status: "pending", progress: undefined, error: undefined, message: undefined }
-          : t
-      )
-    );
-    toast.success("Failed topics reset to pending. Click Generate All to retry.");
-  };
-
-  const pauseGeneration = () => {
-    setIsPaused(true);
-    isPausedRef.current = true;
-    toast("Generation paused", { icon: "⏸️" });
-  };
-
-  const resumeGeneration = () => {
-    setIsPaused(false);
-    isPausedRef.current = false;
-    startBulkGeneration();
-  };
-
-  const completedCount = topics.filter((t) => t.status === "completed").length;
-  const failedCount = topics.filter((t) => t.status === "failed").length;
+  // Local queue (not launched yet) + server-side job counters.
   const pendingCount = topics.filter((t) => t.status === "pending").length;
+  const queuedJobsCount = jobs.filter((j) => j.status === "queued").length;
+  const runningJobsCount = jobs.filter((j) => j.status === "running").length;
+  const completedCount = jobs.filter((j) => j.status === "completed").length;
+  const failedCount = jobs.filter((j) => j.status === "failed").length;
+  const finishedJobsCount = completedCount + failedCount;
+
+  // Compose UI stays enabled while jobs run server-side — only lock it
+  // during the enqueue call itself.
+  const isGenerating = isLaunching;
 
   if (authLoading) {
     return (
@@ -739,45 +573,48 @@ export default function BulkGeneratePage() {
           </p>
         </motion.div>
 
-        {/* Offline banner */}
+        {/* Server-side generation banner */}
         <AnimatePresence>
-          {!isOnline && (
+          {hasActiveJobs && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-800 text-sm flex items-center gap-2"
+              className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-800 text-sm flex items-center gap-2"
             >
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
               <span>
-                <strong>Hors-ligne.</strong> Le bulk attendra automatiquement
-                que la connexion revienne avant de continuer.
+                <strong>Génération en cours sur le serveur.</strong> Vous
+                pouvez quitter cette page — les articles continueront d&apos;être
+                générés et programmés automatiquement.
               </span>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Stats */}
-        {topics.length > 0 && (
+        {(topics.length > 0 || jobs.length > 0) && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className="grid grid-cols-4 gap-4 mb-6"
           >
             <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-              <p className="text-sm text-gray-500">Total</p>
-              <p className="text-2xl font-bold text-gray-900">{topics.length}</p>
+              <p className="text-sm text-gray-500">À lancer</p>
+              <p className="text-2xl font-bold text-gray-900">{pendingCount}</p>
             </div>
             <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-              <p className="text-sm text-gray-500">Pending</p>
-              <p className="text-2xl font-bold text-yellow-600">{pendingCount}</p>
+              <p className="text-sm text-gray-500">En cours / file</p>
+              <p className="text-2xl font-bold text-blue-600">
+                {runningJobsCount + queuedJobsCount}
+              </p>
             </div>
             <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-              <p className="text-sm text-gray-500">Completed</p>
+              <p className="text-sm text-gray-500">Terminés</p>
               <p className="text-2xl font-bold text-green-600">{completedCount}</p>
             </div>
             <div className="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-              <p className="text-sm text-gray-500">Failed</p>
+              <p className="text-sm text-gray-500">Échoués</p>
               <p className="text-2xl font-bold text-red-600">{failedCount}</p>
             </div>
           </motion.div>
@@ -1357,29 +1194,7 @@ export default function BulkGeneratePage() {
 
                     {/* Actions */}
                     <div className="flex items-center gap-2">
-                      {item.status === "completed" && item.articleId && (
-                        <motion.button
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() =>
-                            router.push(`/generate/calendar?articleId=${item.articleId}`)
-                          }
-                          className="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors"
-                        >
-                          Schedule
-                        </motion.button>
-                      )}
-                      {item.status === "failed" && (
-                        <motion.button
-                          whileHover={{ scale: 1.05 }}
-                          whileTap={{ scale: 0.95 }}
-                          onClick={() => resetTopic(item.id)}
-                          className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          <RotateCcw className="w-4 h-4 text-gray-500" />
-                        </motion.button>
-                      )}
-                      {item.status === "pending" && !isGenerating && (
+                      {!isGenerating && (
                         <motion.button
                           whileHover={{ scale: 1.05 }}
                           whileTap={{ scale: 0.95 }}
@@ -1397,68 +1212,199 @@ export default function BulkGeneratePage() {
           )}
         </motion.div>
 
-        {/* Action Buttons */}
+        {/* Launch button */}
         {topics.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
+            className="flex gap-4 mb-6"
+          >
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={startBulkGeneration}
+              disabled={pendingCount === 0 || isLaunching}
+              className="flex-1 py-4 bg-gradient-to-r from-gray-900 to-gray-700 text-white rounded-2xl font-semibold text-lg flex items-center justify-center gap-3 hover:shadow-lg transition-all disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed"
+            >
+              {isLaunching ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  Envoi au serveur...
+                </>
+              ) : (
+                <>
+                  <Rocket className="w-5 h-5" />
+                  Generate All ({pendingCount} articles)
+                </>
+              )}
+            </motion.button>
+          </motion.div>
+        )}
+
+        {/* Server jobs */}
+        {jobs.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white rounded-2xl border border-gray-200 shadow-lg overflow-hidden mb-6"
+          >
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Rocket className="w-4 h-4 text-gray-700" />
+                <span className="text-sm font-medium text-gray-700">
+                  Générations serveur
+                </span>
+                {hasActiveJobs && (
+                  <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded-full px-2 py-0.5">
+                    {runningJobsCount + queuedJobsCount} en cours
+                  </span>
+                )}
+              </div>
+              {finishedJobsCount > 0 && (
+                <button
+                  onClick={clearFinishedJobs}
+                  className="text-xs text-gray-500 hover:text-gray-900 transition-colors"
+                >
+                  Effacer les terminés ({finishedJobsCount})
+                </button>
+              )}
+            </div>
+            <div className="divide-y divide-gray-100">
+              {jobs.map((job) => (
+                <div
+                  key={job.id}
+                  className="p-4 flex items-center gap-4 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex-shrink-0">
+                    {job.status === "queued" && (
+                      <Clock className="w-5 h-5 text-gray-400" />
+                    )}
+                    {job.status === "running" && (
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{
+                          duration: 1,
+                          repeat: Infinity,
+                          ease: "linear",
+                        }}
+                      >
+                        <Loader2 className="w-5 h-5 text-blue-500" />
+                      </motion.div>
+                    )}
+                    {job.status === "completed" && (
+                      <CheckCircle2 className="w-5 h-5 text-green-500" />
+                    )}
+                    {job.status === "failed" && (
+                      <XCircle className="w-5 h-5 text-red-500" />
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 truncate">
+                      {job.topic}
+                    </p>
+                    {job.status === "failed" ? (
+                      <p className="text-sm text-red-500 truncate">
+                        {job.error || "Generation failed"}
+                      </p>
+                    ) : job.status === "completed" ? (
+                      <p className="text-sm text-gray-500 truncate">
+                        {job.result?.articleTitle ? (
+                          <>
+                            → Article&nbsp;: «&nbsp;
+                            <span className="text-gray-700 font-medium">
+                              {job.result.articleTitle}
+                            </span>
+                            &nbsp;»
+                          </>
+                        ) : (
+                          job.message
+                        )}
+                        {job.scheduledAt
+                          ? ` — programmé le ${new Date(
+                              job.scheduledAt
+                            ).toLocaleDateString("fr-FR")}`
+                          : ""}
+                      </p>
+                    ) : (
+                      job.message && (
+                        <p className="text-sm text-gray-500 truncate">
+                          {job.message}
+                        </p>
+                      )
+                    )}
+                  </div>
+
+                  {job.status === "running" && (
+                    <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <motion.div
+                        className="h-full bg-blue-500"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${job.progress || 0}%` }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    {job.status === "completed" && job.articleId && (
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() =>
+                          router.push(
+                            `/generate/calendar?articleId=${job.articleId}`
+                          )
+                        }
+                        className="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 transition-colors"
+                      >
+                        {job.scheduledAt ? "Voir" : "Schedule"}
+                      </motion.button>
+                    )}
+                    {job.status === "failed" && (
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => retryFailedJob(job)}
+                        title="Remettre dans la file"
+                        className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <RotateCcw className="w-4 h-4 text-gray-500" />
+                      </motion.button>
+                    )}
+                    {job.status === "queued" && (
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => cancelQueuedJob(job.id)}
+                        title="Annuler"
+                        className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                      >
+                        <X className="w-4 h-4 text-red-500" />
+                      </motion.button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* Post-run shortcuts */}
+        {completedCount > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
             className="flex gap-4"
           >
-            {!isGenerating ? (
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={startBulkGeneration}
-                disabled={pendingCount === 0}
-                className="flex-1 py-4 bg-gradient-to-r from-gray-900 to-gray-700 text-white rounded-2xl font-semibold text-lg flex items-center justify-center gap-3 hover:shadow-lg transition-all disabled:from-gray-300 disabled:to-gray-300 disabled:cursor-not-allowed"
-              >
-                <Rocket className="w-5 h-5" />
-                Generate All ({pendingCount} articles)
-              </motion.button>
-            ) : (
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={isPaused ? resumeGeneration : pauseGeneration}
-                className="flex-1 py-4 bg-yellow-500 text-white rounded-2xl font-semibold text-lg flex items-center justify-center gap-3 hover:bg-yellow-600 transition-colors"
-              >
-                {isPaused ? (
-                  <>
-                    <Play className="w-5 h-5" />
-                    Resume
-                  </>
-                ) : (
-                  <>
-                    <Pause className="w-5 h-5" />
-                    Pause
-                  </>
-                )}
-              </motion.button>
-            )}
-
-            {failedCount > 0 && !isGenerating && (
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={retryAllFailed}
-                className="px-6 py-4 bg-orange-500 text-white rounded-2xl font-semibold hover:bg-orange-600 transition-colors flex items-center gap-2"
-              >
-                <RotateCcw className="w-5 h-5" />
-                Retry all failed ({failedCount})
-              </motion.button>
-            )}
-
-            {completedCount > 0 && !isGenerating && (
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => router.push("/generate/articles")}
-                className="px-8 py-4 bg-green-600 text-white rounded-2xl font-semibold text-lg hover:bg-green-700 transition-colors"
-              >
-                View Articles
-              </motion.button>
-            )}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => router.push("/generate/articles")}
+              className="px-8 py-4 bg-green-600 text-white rounded-2xl font-semibold text-lg hover:bg-green-700 transition-colors"
+            >
+              View Articles
+            </motion.button>
           </motion.div>
         )}
       </div>

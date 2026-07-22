@@ -417,6 +417,12 @@ export default function SettingsPage() {
       toast.error("Configure your WordPress credentials first.");
       return;
     }
+    if (hasWordPressChanges) {
+      toast.error(
+        "Save your WordPress settings first, then sync. The sync uses the saved credentials for this site."
+      );
+      return;
+    }
     try {
       setIsSyncingTitles(true);
       const idToken = await user.getIdToken();
