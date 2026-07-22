@@ -31,6 +31,75 @@ const DEFAULT_MODELS: Record<Provider, string> = {
   grok: "grok-4",
 };
 
+// ---------------------------------------------------------------------------
+// Similarity filtering — prompt instructions alone don't stop the model from
+// rehashing the same themes with new wording, so we enforce novelty in code.
+// ---------------------------------------------------------------------------
+
+const STOPWORDS = new Set([
+  // French
+  "les", "des", "une", "aux", "avec", "pour", "sans", "sur", "sous", "dans",
+  "est", "vos", "votre", "nos", "notre", "ses", "son", "leur", "leurs", "qui",
+  "que", "quoi", "comment", "pourquoi", "quand", "plus", "moins", "tout",
+  "tous", "toute", "toutes", "bien", "faire", "ans", "chez", "entre", "vers",
+  "par", "pas", "mais", "aussi", "afin", "ces", "cette", "etre", "avoir",
+  "guide", "conseils", "astuces", "erreurs", "eviter", "reussir", "grace",
+  // English
+  "the", "and", "for", "with", "your", "how", "why", "what", "best", "tips",
+  "guide", "top", "avoid", "mistakes",
+]);
+
+// Lowercase, strip accents/punctuation, keep significant words only.
+// Trailing s/x are stripped (light stemming) so "locataire"/"locataires"
+// count as the same word.
+function significantWords(title: string): Set<string> {
+  return new Set(
+    title
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+      .map((w) => w.replace(/[sx]$/, ""))
+  );
+}
+
+// Overlap coefficient: |A ∩ B| / min(|A|, |B|). Robust when one title is
+// much shorter than the other.
+function titleSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  small.forEach((w) => {
+    if (large.has(w)) inter++;
+  });
+  return inter / small.size;
+}
+
+// Two titles sharing ≥60% of their significant words = same subject.
+const SIMILARITY_THRESHOLD = 0.6;
+
+/**
+ * Keywords that dominate the existing catalogue (appear in ≥25% of titles).
+ * Fed back into the prompt so the model steers AWAY from them, instead of
+ * producing yet another variation.
+ */
+function overusedKeywords(titles: string[], max = 8): string[] {
+  if (titles.length < 4) return [];
+  const counts = new Map<string, number>();
+  for (const t of titles) {
+    significantWords(t).forEach((w) => {
+      counts.set(w, (counts.get(w) || 0) + 1);
+    });
+  }
+  return Array.from(counts.entries())
+    .filter(([, n]) => n / titles.length >= 0.25)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, max)
+    .map(([w]) => w);
+}
+
 function extractJsonArray(text: string): string[] {
   if (!text) return [];
 
@@ -99,6 +168,9 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json().catch(() => ({}));
     const count = Math.min(Math.max(parseInt(body.count, 10) || 10, 1), 30);
+    // Over-request so the similarity filter below can drop near-duplicates
+    // and still return the requested count.
+    const askCount = Math.min(count * 2, 40);
     const provider: Provider = (body.aiProvider as Provider) || "openai";
     const model: string = body.model || DEFAULT_MODELS[provider];
 
@@ -175,6 +247,15 @@ export async function POST(request: NextRequest) {
             .join("\n")}`
         : "There are no previously published or generated articles yet.";
 
+      // Themes already saturating the catalogue — force the model away from
+      // them instead of letting it produce the umpteenth variation.
+      const overused = overusedKeywords(knownTitles);
+      const overusedBlock = overused.length
+        ? `\nOVERUSED themes in the catalogue above: "${overused.join(
+            '", "'
+          )}". These subjects are saturated — AT MOST 2 of your ideas may touch any of them. Explore the OTHER facets of this business instead: adjacent problems of the same audience, different personas (beginner vs expert, different customer types), different content formats (case study, comparison, checklist, myth-busting, data/trends, regulation, seasonal), different stages of the customer journey (discovery, evaluation, onboarding, daily use, renewal).`
+        : "";
+
       const userPrompt = `Today's date: ${today}.
 
 ${
@@ -184,14 +265,16 @@ ${
 }
 
 ${knownBlock}
+${overusedBlock}
 
-Generate ${count} distinct, SEO-friendly article TITLE IDEAS that this business could publish next.
+Generate ${askCount} distinct, SEO-friendly article TITLE IDEAS that this business could publish next.
 
 Strict rules:
 - Each item is ONLY a title (no description, no numbering, no quotes).
 - Titles must be in the same language as the business context above (default: French).
 - Avoid duplicates and near-duplicates of the existing titles listed above (different wording but same topic counts as a duplicate — exclude it).
-- Cover varied subtopics, formats, and angles so the ${count} ideas are also distinct from EACH OTHER.
+- Every idea must target a DIFFERENT theme: no two ideas may share their main keyword or answer the same search intent.
+- Spread the ideas across different personas, funnel stages, and content formats — not ${askCount} variations of the flagship topic.
 - Prefer concrete, benefit-driven angles over vague topics.
 - Return ONLY a valid JSON array of strings. No markdown, no commentary.
 
@@ -214,11 +297,25 @@ Format strictly:
       const raw = await generator.generateText(messages, {
         model,
         provider,
-        temperature: 0.8,
-        maxTokens: 1500,
+        temperature: 0.9,
+        maxTokens: 2500,
       });
 
-      const ideas = extractJsonArray(raw).slice(0, count);
+      // Enforce novelty in code: drop any idea too close to an existing
+      // title/topic OR to an already-accepted idea, then trim to `count`.
+      const knownSets = knownTitles.map(significantWords);
+      const acceptedSets: Set<string>[] = [];
+      const ideas: string[] = [];
+      for (const candidate of extractJsonArray(raw)) {
+        if (ideas.length >= count) break;
+        const words = significantWords(candidate);
+        const tooClose = [...knownSets, ...acceptedSets].some(
+          (s) => titleSimilarity(words, s) >= SIMILARITY_THRESHOLD
+        );
+        if (tooClose) continue;
+        acceptedSets.push(words);
+        ideas.push(candidate);
+      }
 
       return NextResponse.json({ ideas });
     } finally {

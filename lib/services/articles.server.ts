@@ -65,18 +65,26 @@ export async function getUserArticles(
 }
 
 /**
- * Get just the titles of all saved articles for a site (lightweight — skips the
- * heavy `content` field). Used to exclude already-generated topics from new idea
- * generation.
+ * Get the titles AND original topics of all saved articles for a site
+ * (lightweight — skips the heavy `content` field). Used to exclude
+ * already-generated subjects from new idea generation: the saved title is the
+ * SEO metaTitle, while `topic` is what the user actually queued, so both carry
+ * useful exclusion signal.
  */
 export async function getUserArticleTitles(
   userId: string,
   siteId: string
 ): Promise<string[]> {
-  const snapshot = await articlesCol(userId, siteId).select("title").get();
-  return snapshot.docs
-    .map((doc) => (doc.data().title as string) || "")
-    .filter(Boolean);
+  const snapshot = await articlesCol(userId, siteId)
+    .select("title", "topic")
+    .get();
+  const out: string[] = [];
+  for (const doc of snapshot.docs) {
+    const data = doc.data() as { title?: string; topic?: string };
+    if (data.title) out.push(data.title);
+    if (data.topic) out.push(data.topic);
+  }
+  return out;
 }
 
 /**
